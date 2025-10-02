@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GeoChessr 3x3</title>
+  <link rel="stylesheet" href="{{ url_for('styles', filename='main.css') }}">
+</head>
+<body>
+  <main class="container">
+    <h2 class="title">3x3 Chessboard (Mock FEN)</h2>
+    <div class="board-wrapper">
+      <div id="board" class="board" aria-label="3 by 3 chessboard"></div>
+    </div>
+
+    <section class="controls">
+      <form id="fenForm" class="row" autocomplete="off">
+        <input id="fenInput" type="text" placeholder="Enter mock FEN like r2/bb1/B2" aria-label="Mock FEN input" />
+        <button type="submit" aria-label="Render position">Render</button>
+      </form>
+      <p class="hint">Use 3 ranks separated by '/', digits 1-3 for empty squares. Uppercase = White, lowercase = Black.</p>
+      <div id="error" class="error" role="status" aria-live="polite"></div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('scripts', filename='main.js') }}"></script>
+</body>
+</html>
+
+

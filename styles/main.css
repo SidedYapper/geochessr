@@ -1,0 +1,132 @@
+:root {
+  --light: #eeeed2;
+  --dark: #769656;
+  --border: #444;
+  --bg: #0f172a;
+  --text: #e2e8f0;
+  --accent: #38bdf8;
+  --danger: #ef4444;
+}
+
+html, body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  display: grid;
+  place-items: center;
+}
+
+.container {
+  width: min(92vw, 560px);
+  padding: 20px;
+  box-sizing: border-box;
+  display: grid;
+  gap: 16px;
+}
+
+.title {
+  margin: 0 0 4px 0;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.board-wrapper {
+  display: grid;
+  place-items: center;
+}
+
+.board {
+  width: min(92vw, 420px);
+  aspect-ratio: 1 / 1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+  border: 4px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  background: var(--border);
+}
+
+.square {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  user-select: none;
+}
+
+.square.light { background: var(--light); }
+.square.dark { background: var(--dark); }
+
+.square img {
+  width: 74%;
+  height: 74%;
+  object-fit: contain;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 1px rgba(0,0,0,0.25));
+}
+
+.controls {
+  display: grid;
+  gap: 8px;
+}
+
+.hint {
+  margin: 0;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+input[type="text"] {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #0b1220;
+  color: var(--text);
+  outline: none;
+  font-size: 14px;
+  transition: border-color 120ms ease;
+}
+
+input[type="text"]:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.15);
+}
+
+button {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #111827;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+button:hover {
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.error {
+  min-height: 1.2em;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+
