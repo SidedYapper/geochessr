@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GeoChessr 3x3</title>
+  <title>GeoChessr</title>
   <link rel="stylesheet" href="{{ url_for('styles', filename='main.css') }}">
 </head>
 <body>
@@ -12,7 +12,9 @@
     <div class="boards">
       <div class="board-wrapper">
         <div id="labelLeft" class="board-label">Find these pieces</div>
-        <div id="board" class="board" aria-label="mock chessboard"></div>
+        <div class="board-shell">
+          <div id="board" class="board" aria-label="mock chessboard"></div>
+        </div>
       </div>
       <div class="board-wrapper">
         <div id="labelRight" class="board-label">On the chessboard</div>

@@ -4,6 +4,7 @@
 const PIECE_LETTERS = new Set(['p','r','n','b','q','k','P','R','N','B','Q','K']);
 
 const boardEl = document.getElementById('board');
+const boardShellEl = document.querySelector('.board-shell');
 const errorEl = document.getElementById('error');
 const board8El = document.getElementById('board8');
 let lastOverlayTopLeft = null; // {row, col} in 0-based 8x8 coords
@@ -14,6 +15,9 @@ let currentCols = 0;
 let topLeftLight = true; // default
 let overlayFrozen = false;
 let feedbackLineEl = null;
+let isTouching = false;
+let lastTouchWithinBoard = false;
+let suppressNextClick = false;
 
 function createBoardSquares(rows, cols) {
   boardEl.innerHTML = '';
@@ -119,6 +123,8 @@ function updateBoardFromInput() {
     requestAnimationFrame(enforceLeftBoardMaxHeight);
     // Recompute title position after layout settles
     requestAnimationFrame(positionTitle);
+    // Adjust meta width to keep ratio with boards on desktop
+    requestAnimationFrame(applyLayoutSizing);
   } catch (err) {
     errorEl.textContent = err && err.message ? err.message : String(err);
   }
@@ -150,9 +156,10 @@ document.addEventListener('DOMContentLoaded', function() {
   if (lblR) lblR.style.display = 'block';
   positionTitle();
   window.addEventListener('resize', positionTitle);
+  window.addEventListener('resize', applyLayoutSizing);
   // Also observe size changes of boards to keep title centered when 2x4/4x2 sizes adjust
   try {
-    const ro = new ResizeObserver(() => positionTitle());
+    const ro = new ResizeObserver(() => { positionTitle(); applyLayoutSizing(); });
     if (boardEl) ro.observe(boardEl);
     if (board8El) ro.observe(board8El);
     const boardsWrapper = document.querySelector('.boards');
@@ -179,6 +186,11 @@ function initBoard8() {
   board8El.addEventListener('mousemove', handleBoard8Hover);
   board8El.addEventListener('mouseleave', clearBoard8Overlay);
   board8El.addEventListener('click', handleBoard8Click);
+  // Touch support: show overlay during touch, submit on release inside board
+  board8El.addEventListener('touchstart', handleBoard8TouchStart, { passive: false });
+  board8El.addEventListener('touchmove', handleBoard8TouchMove, { passive: false });
+  board8El.addEventListener('touchend', handleBoard8TouchEnd);
+  board8El.addEventListener('touchcancel', handleBoard8TouchCancel);
 }
 
 function clearBoard8Overlay() {
@@ -193,10 +205,19 @@ function clearBoard8Overlay() {
 
 function handleBoard8Hover(evt) {
   if (overlayFrozen) return; // stop following when frozen
+  updateOverlayAtClientXY(evt.clientX, evt.clientY);
+}
+
+function updateOverlayAtClientXY(clientX, clientY) {
   // Calculate which square we are over
   const rect = board8El.getBoundingClientRect();
-  const x = evt.clientX - rect.left;
-  const y = evt.clientY - rect.top;
+  const x = clientX - rect.left;
+  const y = clientY - rect.top;
+  if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
+    clearBoard8Overlay();
+    lastTouchWithinBoard = false;
+    return false;
+  }
   const squareWidth = rect.width / 8;
   const squareHeight = rect.height / 8;
   const col = Math.min(7, Math.max(0, Math.floor(x / squareWidth)));
@@ -208,7 +229,7 @@ function handleBoard8Hover(evt) {
     parsed = parseMockFen(currentFen);
   } catch (e) {
     clearBoard8Overlay();
-    return;
+    return false;
   }
 
   const { rows, cols, cells } = parsed;
@@ -235,7 +256,6 @@ function handleBoard8Hover(evt) {
       img.className = 'b8-overlay';
       img.alt = `Overlay ${ch}`;
       img.src = pieceToAssetPath(ch);
-      // Size similar to primary board styling
       img.style.width = '74%';
       img.style.height = '74%';
       img.style.objectFit = 'contain';
@@ -245,19 +265,69 @@ function handleBoard8Hover(evt) {
     }
   }
 
-  // Save current top-left for click submission
+  // Save current top-left for submission
   lastOverlayTopLeft = { row: startRow, col: startCol };
+  lastTouchWithinBoard = true;
+  return true;
+}
+
+function handleBoard8TouchStart(evt) {
+  if (overlayFrozen) return;
+  if (!evt.touches || evt.touches.length === 0) return;
+  isTouching = true;
+  lastTouchWithinBoard = false;
+  // prevent synthetic mouse events and scrolling
+  evt.preventDefault();
+  const t = evt.touches[0];
+  updateOverlayAtClientXY(t.clientX, t.clientY);
+}
+
+function handleBoard8TouchMove(evt) {
+  if (overlayFrozen) return;
+  if (!isTouching) return;
+  if (!evt.touches || evt.touches.length === 0) return;
+  evt.preventDefault();
+  const t = evt.touches[0];
+  updateOverlayAtClientXY(t.clientX, t.clientY);
+}
+
+function handleBoard8TouchEnd(evt) {
+  if (overlayFrozen) return;
+  if (!isTouching) return;
+  // If touch ended within board, submit; else just clear overlay
+  const endedInside = !!lastTouchWithinBoard && !!lastOverlayTopLeft;
+  // Suppress the click event that some browsers fire after touchend
+  suppressNextClick = true;
+  isTouching = false;
+  if (!endedInside) {
+    clearBoard8Overlay();
+    return;
+  }
+  // Submit like a click
+  submitBoard8Selection();
+}
+
+function handleBoard8TouchCancel() {
+  isTouching = false;
+  lastTouchWithinBoard = false;
+  if (!overlayFrozen) clearBoard8Overlay();
 }
 
 async function handleBoard8Click() {
+  if (suppressNextClick) { suppressNextClick = false; return; }
+  // During feedback mode, ignore clicks entirely
+  if (overlayFrozen) return;
+  if (!lastOverlayTopLeft) return;
+  if (!geochessId) return;
+  await submitBoard8Selection();
+}
+
+async function submitBoard8Selection() {
+  if (overlayFrozen) return;
   if (!lastOverlayTopLeft) return;
   const id = geochessId;
   if (!id) return;
-
-  // Freeze current overlay and stop following the mouse
   overlayFrozen = true;
-
-  // Submit top-left as (x,y) matching posx/posy semantics from backend (0-based)
   const payload = { id, x: lastOverlayTopLeft.col, y: lastOverlayTopLeft.row };
   try {
     const res = await fetch('/api/check_position', {
@@ -270,19 +340,15 @@ async function handleBoard8Click() {
     if (!data.correct) {
       drawFeedbackLine(lastOverlayTopLeft, { col: data.answer.x, row: data.answer.y });
     }
-    // If server provides fullFen, render it on the left board (8x8)
     if (data && typeof data.fullFen === 'string' && data.fullFen.length > 0) {
       const placement = data.fullFen.split(' ')[0];
-      currentFen = placement; // now treat as an 8x8 placement-only FEN
-      // For full 8x8 feedback board, force top-left to be light
+      currentFen = placement;
       topLeftLight = true;
       updateBoardFromInput();
       if (Array.isArray(data.lastMoveCells) && data.lastMoveCells.length) {
-        // Highlight last move on the now-8x8 left board
         setTimeout(() => highlightAbsoluteLastMove(data.lastMoveCells), 0);
       }
     }
-    // Update meta link if provided
     if (data && data.gameId && typeof data.halfMoveNum === 'number') {
       const link = document.getElementById('metaGameLink');
       if (link) {
@@ -323,11 +389,6 @@ function showResultMessage(resp) {
       nextBtn.addEventListener('click', handleNextClick);
       nextBtn.dataset.bound = '1';
     }
-    // Hide initial labels permanently after first submission
-    const lblL = document.getElementById('labelLeft');
-    const lblR = document.getElementById('labelRight');
-    if (lblL) lblL.style.display = 'none';
-    if (lblR) lblR.style.display = 'none';
   }
 }
 
@@ -383,6 +444,13 @@ async function handleNextClick() {
     if (title) { title.textContent = ''; }
     const nextBtn = document.getElementById('nextButton');
     if (nextBtn) { nextBtn.classList.remove('success', 'error'); }
+    // Re-apply layout sizing after new position
+    applyLayoutSizing();
+    // Hide initial labels permanently after first submission
+    const lblL = document.getElementById('labelLeft');
+    const lblR = document.getElementById('labelRight');
+    if (lblL) lblL.style.display = 'none';
+    if (lblR) lblR.style.display = 'none';
   } catch (_) {
     // silent fail
   }
@@ -537,6 +605,38 @@ function positionTitle() {
   else {
     title.style.visibility = 'visible';
   }
+}
+
+function applyLayoutSizing() {
+  const wrapper = document.querySelector('.boards');
+  if (!wrapper) return;
+  const isLandscape = window.innerWidth >= window.innerHeight;
+  if (!isLandscape) {
+    // Reset to CSS-controlled sizing in portrait
+    wrapper.style.gridTemplateColumns = '';
+    document.documentElement.style.setProperty('--meta-scale', '1');
+    return;
+  }
+  const leftW = boardEl ? boardEl.getBoundingClientRect().width : 0;
+  const shellW = boardShellEl ? boardShellEl.getBoundingClientRect().width : leftW;
+  const rightW = board8El ? board8El.getBoundingClientRect().width : 0;
+  const boardW = Math.max(0, Math.min(shellW || rightW, rightW || shellW));
+  if (!boardW) return;
+  const RATIO = 0.75; // meta width relative to a board width
+  let metaW = Math.round(boardW * RATIO);
+  // Keep within reasonable bounds from previous design
+  metaW = Math.max(240, Math.min(420, metaW));
+  wrapper.style.gridTemplateColumns = `auto auto ${metaW}px`;
+
+   // Scale meta content based on viewport height versus board size
+   const vh = window.innerHeight || 0;
+   if (vh > 0) {
+     // Target: boards plus meta should fit; when vh is small, shrink meta typography
+     // Compute a scale between 0.8 and 1.0 depending on height
+     const targetH = 820; // heuristic total content height
+     const scale = Math.max(0.8, Math.min(1.0, vh / targetH));
+     document.documentElement.style.setProperty('--meta-scale', String(scale));
+   }
 }
 
 

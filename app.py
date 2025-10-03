@@ -13,8 +13,7 @@ def create_app() -> Flask:
 
     styles_dir = os.path.join(base_dir, "styles")
     scripts_dir = os.path.join(base_dir, "scripts")
-    assets_cburnett_dir = os.path.join(base_dir, "assets", "cburnett")
-    assets_images_dir = os.path.join(base_dir, "assets", "images")
+    assets_dir = os.path.join(base_dir, "assets")
 
     @app.route("/")
     def index():
@@ -125,13 +124,13 @@ def create_app() -> Flask:
     def scripts(filename: str):
         return send_from_directory(scripts_dir, filename)
 
-    @app.route("/assets/cburnett/<path:filename>")
-    def assets_cburnett(filename: str):
-        return send_from_directory(assets_cburnett_dir, filename)
+    @app.route("/favicon.ico")
+    def favicon():
+        return send_from_directory(assets_dir, "favicon.ico")
 
-    @app.route("/assets/images/<path:filename>")
-    def assets_images(filename: str):
-        return send_from_directory(assets_images_dir, filename)
+    @app.route("/assets/<path:filename>")
+    def assets(filename: str):
+        return send_from_directory(assets_dir, filename)
 
     @app.route("/api/check_position", methods=["POST"])
     def api_check_position():

@@ -8,6 +8,8 @@
   --danger: #ef4444;
   --dim-light: #cdd16a;
   --dim-dark: #aaa23a;
+  /* JS-adjusted scale for metadata when viewport height is small */
+  --meta-scale: 1;
 }
 
 html, body {
@@ -24,7 +26,7 @@ body {
 }
 
 .container {
-  width: min(92vw, 1200px);
+  width: min(96vw, 1600px);
   padding: 20px;
   box-sizing: border-box;
   display: grid;
@@ -43,7 +45,7 @@ body {
   left: 0;
   right: 0;
   text-align: center;
-  font-size: 50px;
+  font-size: clamp(28px, 4vw, 64px);
   font-weight: 800;
   color: var(--text);
   margin: 0;
@@ -58,18 +60,24 @@ body {
   gap: 8px;
 }
 
+.board-shell {
+  width: clamp(360px, 44vw, 720px);
+  /* maintain square area for the container to avoid layout shift */
+  aspect-ratio: 1 / 1;
+  display: grid;
+  place-items: center;
+}
+
 .boards {
   display: grid;
-  grid-template-columns: auto auto minmax(200px, 260px);
+  grid-template-columns: auto auto clamp(240px, 22vw, 360px);
   gap: 48px;
   align-items: start;
-  justify-content: center;
-  justify-items: center;
 }
 
 .board {
   position: relative;
-  width: min(44vw, 560px);
+  width: 100%;
   aspect-ratio: 1 / 1; /* default; overridden dynamically */
   display: grid;
   grid-template-columns: repeat(var(--cols, 3), 1fr);
@@ -84,19 +92,18 @@ body {
 .board-8 {
   --rows: 8;
   --cols: 8;
-  width: min(44vw, 560px);
+  width: clamp(360px, 44vw, 720px);
 }
 
 .board-label {
   color: #9ca3af;
-  font-size: 20px;
+  font-size: clamp(14px, 1.6vw, 20px);
   font-weight: 700;
   letter-spacing: 0.3px;
 }
 
 .meta {
-  width: 100%;
-  margin-top: 50px;
+  width: 50%;
 }
 
 .meta-card {
@@ -105,25 +112,26 @@ body {
   background: #0b1220;
   color: var(--text);
   border-radius: 10px;
-  padding: 12px 14px;
+  padding: calc(clamp(8px, 1vw, 14px) * var(--meta-scale)) calc(clamp(10px, 1.2vw, 16px) * var(--meta-scale));
   display: grid;
-  gap: 8px;
+  gap: calc(8px * var(--meta-scale));
 }
 
 .meta-row {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 12px;
+  gap: calc(12px * var(--meta-scale));
   align-items: center;
 }
 
 .meta-label {
   color: #9ca3af;
-  font-size: 13px;
+  font-size: calc(clamp(11px, 1.1vw, 13px) * var(--meta-scale));
 }
 
 .meta-value {
   font-weight: 600;
+  font-size: calc(clamp(12px, 1.2vw, 16px) * var(--meta-scale));
 }
 
 /* Style URL link in metadata to match theme */
@@ -144,7 +152,7 @@ body {
 .next-btn {
   margin-top: 12px;
   width: 100%;
-  padding: 10px 14px;
+  padding: calc(clamp(8px, 1vw, 12px) * var(--meta-scale)) calc(clamp(10px, 1.2vw, 14px) * var(--meta-scale));
   border-radius: 8px;
   border: 1px solid #334155;
   font-weight: 700;
@@ -163,21 +171,18 @@ body {
   display: grid;
   gap: 10px;
   margin-top: 12px;
+  /* Prevent children (like the Next button) from stretching vertically */
+  align-items: start;
+  align-content: start;
+  grid-template-rows: auto auto;
 }
 
-.feedback-card.success {
-  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.25); /* emerald-500, softer */
-}
-
-.feedback-card.error {
-  box-shadow: 0 6px 16px rgba(239, 68, 68, 0.25); /* red-500, softer */
-}
 
 .status-title {
   font-weight: 800;
   letter-spacing: 0.3px;
   color: var(--text);
-  font-size: 20px;
+  font-size: calc(clamp(16px, 2.2vw, 24px) * var(--meta-scale));
   text-align: center;
 }
 
@@ -278,6 +283,58 @@ button:hover {
   min-height: 1.2em;
   color: var(--danger);
   font-size: 13px;
+}
+
+/* Responsive layouts */
+@media (orientation: landscape) {
+  .boards {
+    grid-template-columns: auto auto clamp(260px, 22vw, 420px);
+    gap: clamp(24px, 3vw, 40px);
+    align-items: start;
+    justify-content: left;
+    justify-items: left;
+  }
+  .board,
+  .board-8 {
+    /* Fit within viewport height alongside title/meta */
+    max-width: min(36vw, calc(100vh - 240px), 720px);
+  }
+  .board-shell {
+    /* Keep shell constrained just like boards to avoid jumps */
+    max-width: min(36vw, calc(100vh - 240px), 720px);
+  }
+  .meta {
+    margin-top: 10%;
+  }
+}
+
+@media (orientation: portrait) {
+  .boards {
+    grid-template-columns: 1fr;
+    gap: clamp(16px, 4vw, 28px);
+    align-items: center;
+    justify-content: center;
+    justify-items: center;
+  }
+  .board,
+  .board-8 {
+    max-width: min(92vw, calc(49vh - 140px), 560px);
+  }
+  .board-shell {
+    max-width: min(92vw, calc(49vh - 140px), 560px);
+  }
+  .meta {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5vw;
+    margin-top: 0;
+    width: 50%;
+    margin-left: -5vw;
+  }
+  .meta > .meta-card,
+  .meta > .feedback-card {
+    margin-top: 0;
+  }
 }
 
 
