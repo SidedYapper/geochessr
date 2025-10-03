@@ -8,21 +8,43 @@
 </head>
 <body>
   <main class="container">
-    <h2 class="title">3x3 Chessboard (Mock FEN)</h2>
-    <div class="board-wrapper">
-      <div id="board" class="board" aria-label="3 by 3 chessboard"></div>
+    <h1 class="page-title">GeoChessr</h1>
+    <div class="boards">
+      <div class="board-wrapper">
+        <div id="labelLeft" class="board-label">Find these pieces</div>
+        <div id="board" class="board" aria-label="mock chessboard"></div>
+      </div>
+      <div class="board-wrapper">
+        <div id="labelRight" class="board-label">On the chessboard</div>
+        <div id="board8" class="board board-8" aria-label="8 by 8 overlay board"></div>
+      </div>
+      <aside class="meta" aria-label="Game meta">
+        <div class="meta-card">
+          <div class="meta-row"><span class="meta-label">Result</span><span id="metaResult" class="meta-value">{{ (game_meta.result or '') if game_meta else '' }}</span></div>
+          <div class="meta-row"><span class="meta-label">White ELO</span><span id="metaWhiteElo" class="meta-value">{{ (game_meta.whiteElo or '') if game_meta else '' }}</span></div>
+          <div class="meta-row"><span class="meta-label">Black ELO</span><span id="metaBlackElo" class="meta-value">{{ (game_meta.blackElo or '') if game_meta else '' }}</span></div>
+          <div class="meta-row"><span class="meta-label">Time</span><span id="metaTime" class="meta-value">{{ (game_meta.timeControl or '') if game_meta else '' }}</span></div>
+          <div class="meta-row"><span class="meta-label">Move #</span><span id="metaMove" class="meta-value">{{ (game_meta.moveNum or '') if game_meta else '' }}</span></div>
+          <div class="meta-row"><span class="meta-label">URL</span><span class="meta-value"><a id="metaGameLink" href="#" target="_blank" rel="noopener noreferrer"></a></span></div>
+        </div>
+        <div id="feedbackCard" class="feedback-card" style="display: none;">
+          <div id="feedbackTitle" class="status-title"></div>
+          <button id="nextButton" class="next-btn" aria-label="Next">Next</button>
+        </div>
+      </aside>
     </div>
 
     <section class="controls">
-      <form id="fenForm" class="row" autocomplete="off">
-        <input id="fenInput" type="text" placeholder="Enter mock FEN like r2/bb1/B2" aria-label="Mock FEN input" />
-        <button type="submit" aria-label="Render position">Render</button>
-      </form>
-      <p class="hint">Use 3 ranks separated by '/', digits 1-3 for empty squares. Uppercase = White, lowercase = Black.</p>
       <div id="error" class="error" role="status" aria-live="polite"></div>
     </section>
   </main>
 
+  <script>
+    window.INITIAL_SUBFEN = {{ (initial_subfen or '')|tojson }};
+    window.GEOCHESS_ID = {{ (geochess_id or '')|tojson }};
+    window.LAST_MOVE_CELLS = {{ (last_move_cells or [])|tojson }};
+    window.TOP_LEFT_LIGHT = {{ (top_left_light if top_left_light is not none else '')|tojson }};
+  </script>
   <script src="{{ url_for('scripts', filename='main.js') }}"></script>
 </body>
 </html>

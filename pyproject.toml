@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+[project]
+name = "geo_server"
+dynamic = ["version"]
+dependencies = [
+  "tqdm"
+]
+requires-python = ">= 3.10"
+authors = [
+  {name = "Yannik Keller", email = "yannik@kelnet.de"},
+]
+description = "A server for the GeoChessr game."
+readme = "README.md"
+license = {text = "MIT License"}
+[project.optional-dependencies]
+all = ["chess", "tqdm", "pydantic", "requests"]
+[tool.hatch.version]
+path = "geo_server/__init__.py"
