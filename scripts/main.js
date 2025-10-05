@@ -144,6 +144,18 @@ document.addEventListener('DOMContentLoaded', function() {
   currentRunId = window.RUN_ID || null;
   currentRunIndex = Number(window.RUN_INDEX || 0);
   currentRunLen = Number(window.RUN_LEN || 0);
+  // Update titles with daily flag if applicable
+  try {
+    if (window.IS_DAILY) {
+      const h = document.querySelector('h1.page-title');
+      if (h && !h.textContent.includes('Daily')) {
+        h.textContent = `${h.textContent} - Daily`;
+      }
+      if (document && document.title && !document.title.includes('Daily')) {
+        document.title = `${document.title} - Daily`;
+      }
+    }
+  } catch (_) {}
   
   // Initialize submissions array from server data or create empty array
   const allSubs = Array.isArray(window.ALL_SUBMISSIONS) ? window.ALL_SUBMISSIONS : [];
@@ -218,10 +230,12 @@ document.addEventListener('DOMContentLoaded', function() {
     modalClose.addEventListener('click', () => { modal.style.display = 'none'; });
   }
   if (btnGithub) {
-    btnGithub.addEventListener('click', () => { /* noop for now */ });
+    btnGithub.addEventListener('click', () => { window.location.href = 'https://github.com/yannikkellerde/geochessr'; });
   }
   if (btnAbout) {
-    btnAbout.addEventListener('click', () => { /* noop for now */ });
+    btnAbout.addEventListener('click', () => {
+      window.location.href = '/about';
+    });
   }
 
   const diffBuckets = [

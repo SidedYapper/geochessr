@@ -3,12 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GeoChessr</title>
+  <title>GeoChessr{% if is_daily %} - Daily{% endif %}</title>
   <link rel="stylesheet" href="{{ url_for('styles', filename='main.css') }}">
 </head>
 <body>
   <main class="container">
-    <h1 class="page-title">GeoChessr</h1>
+    <h1 class="page-title">GeoChessr{% if is_daily %} - Daily{% endif %}</h1>
     <div class="boards">
       <div class="board-wrapper">
         <div id="labelLeft" class="board-label">Find these pieces</div>
@@ -51,7 +51,7 @@
   <!-- Bottom menu -->
   <nav class="bottom-menu" aria-label="Utility menu">
     <button id="btnNewRun" class="menu-btn" type="button">New Run</button>
-    <button id="btnGithub" class="menu-btn" type="button">Github</button>
+    <button id="btnGithub" class="menu-btn" type="button">GitHub</button>
     <button id="btnAbout" class="menu-btn" type="button">About</button>
   </nav>
 
@@ -100,6 +100,7 @@
     window.RUN_LEN = {{ (run_len if run_len is not none else 0)|tojson }};
     window.PRIOR_SUBMISSION = {{ (prior_submission or None)|tojson }};
     window.ALL_SUBMISSIONS = {{ (all_submissions or [])|tojson }};
+    window.IS_DAILY = {{ (is_daily or False)|tojson }};
   </script>
   <script src="{{ url_for('scripts', filename='main.js') }}"></script>
 </body>

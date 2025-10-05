@@ -1,4 +1,8 @@
 import os
+import threading
+import time
+from datetime import datetime, timedelta
+import uuid
 from flask import (
     Flask,
     render_template,
@@ -37,6 +41,74 @@ def create_app() -> Flask:
     scripts_dir = os.path.join(base_dir, "scripts")
     assets_dir = os.path.join(base_dir, "assets")
 
+    # -------------------- Session tracking for purge --------------------
+    app.config.setdefault("SESSION_INDEX", {})  # sid -> last_access_ts (epoch seconds)
+    app.config.setdefault("REVOKED_SIDS", set())
+
+    def _get_or_set_sid():
+        sid = session.get("sid")
+        if not sid:
+            sid = uuid.uuid4().hex
+            session["sid"] = sid
+        return sid
+
+    @app.before_request
+    def _track_session_last_access():
+        try:
+            sid = _get_or_set_sid()
+            # If this sid was revoked by the background task, clear it now
+            revoked = app.config.get("REVOKED_SIDS", set())
+            if sid in revoked:
+                try:
+                    revoked.remove(sid)
+                except Exception:
+                    pass
+                session.clear()
+                # Assign a fresh sid after clearing
+                session["sid"] = uuid.uuid4().hex
+                sid = session["sid"]
+            # Update last access time
+            app.config["SESSION_INDEX"][sid] = time.time()
+        except Exception:
+            # Do not block requests on tracking errors
+            pass
+
+    def purge_old_sessions(max_age_seconds: int = 3600):
+        now = time.time()
+        index = app.config.get("SESSION_INDEX", {})
+        to_revoke = []
+        for sid, last_ts in list(index.items()):
+            try:
+                if (now - float(last_ts)) > max_age_seconds:
+                    to_revoke.append(sid)
+            except Exception:
+                # If corrupted timestamp, revoke
+                to_revoke.append(sid)
+        if to_revoke:
+            revoked = app.config.get("REVOKED_SIDS", set())
+            for sid in to_revoke:
+                revoked.add(sid)
+                # Also remove from index so it doesn't grow unbounded
+                try:
+                    del index[sid]
+                except Exception:
+                    pass
+            app.config["REVOKED_SIDS"] = revoked
+            app.config["SESSION_INDEX"] = index
+
+    def _redirect_to_daily_run():
+        # Otherwise redirect to the daily run
+        db_path = os.path.join(base_dir, "database", "geo_chess.db")
+        wrapper = SQLiteWrapper(db_path)
+        daily = wrapper.get_daily_run()
+        try:
+            wrapper.conn.close()
+        except Exception:
+            pass
+        if daily is None:
+            return "Daily run not configured", 500
+        return redirect(url_for("run_page", run_id=daily.identifier))
+
     @app.route("/")
     def index():
         # If session has an unfinished run, continue that
@@ -60,17 +132,66 @@ def create_app() -> Flask:
                     )
         except Exception:
             pass
-        # Otherwise redirect to the daily run
-        db_path = os.path.join(base_dir, "database", "geo_chess.db")
-        wrapper = SQLiteWrapper(db_path)
-        daily = wrapper.get_daily_run()
-        try:
-            wrapper.conn.close()
-        except Exception:
-            pass
-        if daily is None:
-            return "Daily run not configured", 500
-        return redirect(url_for("run_page", run_id=daily.identifier))
+        return _redirect_to_daily_run()
+
+    @app.route("/daily")
+    def daily():
+        return _redirect_to_daily_run()
+
+    @app.route("/about")
+    def about_page():
+        return render_template("about.html")
+
+    # -------------------- Daily background task --------------------
+    def _seconds_until_next_midnight() -> float:
+        now_dt = datetime.now()
+        tomorrow = now_dt.date() + timedelta(days=1)
+        midnight = datetime.combine(tomorrow, datetime.min.time())
+        delta = (midnight - now_dt).total_seconds()
+        # Safety: never negative
+        return max(1.0, float(delta))
+
+    def _run_daily_job():
+        # Run forever as a daemon
+        while True:
+            try:
+                # Sleep until next midnight
+                sleep_s = _seconds_until_next_midnight()
+                time.sleep(sleep_s)
+                # Execute inside app context
+                with app.app_context():
+                    # Create the new daily run
+                    db_path = os.path.join(base_dir, "database", "geo_chess.db")
+                    wrapper = SQLiteWrapper(db_path)
+                    try:
+                        from geo_server.manage_runs import create_daily_run
+
+                        create_daily_run(wrapper, grab_new_tournaments=True)
+                    finally:
+                        try:
+                            wrapper.conn.close()
+                        except Exception:
+                            pass
+                    # Purge sessions not accessed in the last hour
+                    purge_old_sessions(max_age_seconds=3600)
+            except Exception:
+                # If anything goes wrong, wait a minute and retry scheduling
+                time.sleep(60)
+
+    def _start_daily_thread_if_needed():
+        # Avoid duplicate threads in reloader/production multi-workers
+        if app.config.get("DAILY_THREAD_STARTED"):
+            return
+        # In debug with reloader, only start in the main subprocess
+        if app.debug:
+            if os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+                return
+
+        if os.getenv("NO_DAILY_RUNNER") == "true":
+            return
+        t = threading.Thread(target=_run_daily_job, name="daily-runner", daemon=True)
+        t.start()
+        app.config["DAILY_THREAD_STARTED"] = True
 
     def _build_game_meta(geo):
         try:
@@ -119,7 +240,6 @@ def create_app() -> Flask:
         puzzle_index: int | None,
         black_info_rate: float | None,
     ) -> dict | None:
-        print("Masking game meta", game_meta, run_id, puzzle_index, black_info_rate)
         if not game_meta:
             return game_meta
         try:
@@ -139,9 +259,7 @@ def create_app() -> Flask:
                 import struct
 
                 rnd = struct.unpack("!I", h[:4])[0] / 2**32
-                print("RND", rnd, bir)
                 if rnd < bir:
-                    print("Masking", field_name, value)
                     return "*****"
                 return value
             except Exception:
@@ -156,7 +274,6 @@ def create_app() -> Flask:
         masked_meta["opening_name"] = masked(
             "opening_name", game_meta.get("opening_name")
         )
-        print("Masked meta", masked_meta)
         return masked_meta
 
     def _subfen_last_move_cells(geo):
@@ -199,7 +316,6 @@ def create_app() -> Flask:
         db_path = os.path.join(base_dir, "database", "geo_chess.db")
         wrapper = SQLiteWrapper(db_path)
         run = wrapper.get_run(run_id)
-        print("Run", run)
         if run is None or not run.puzzle_ids:
             try:
                 wrapper.conn.close()
@@ -269,6 +385,7 @@ def create_app() -> Flask:
             run_id=run.identifier,
             run_index=index,
             run_len=len(run.puzzle_ids),
+            is_daily=run.is_daily,
             prior_submission=prior_sub,
             all_submissions=all_subs,
         )
@@ -450,6 +567,7 @@ def create_app() -> Flask:
                 "index": next_index,
                 "len": len(run.puzzle_ids),
                 "is_last": is_last,
+                "is_daily": run.is_daily,
             }
         )
 
@@ -463,13 +581,13 @@ def create_app() -> Flask:
         # Map difficulty from slider (0..3) to percentages and black_info_rate
         difficulty = int(data.get("difficulty", 1))
         if difficulty == 0:
-            min_dp, max_dp, bir = 0.0, 0.3, 0.0
+            min_dp, max_dp, bir, min_score = 0.0, 0.3, 0.0, 6.0
         elif difficulty == 1:
-            min_dp, max_dp, bir = 0.2, 0.6, 0.2
+            min_dp, max_dp, bir, min_score = 0.2, 0.6, 0.2, 6.0
         elif difficulty == 2:
-            min_dp, max_dp, bir = 0.4, 0.8, 0.5
+            min_dp, max_dp, bir, min_score = 0.4, 0.8, 0.5, 5.0
         else:
-            min_dp, max_dp, bir = 0.6, 1.0, 0.8
+            min_dp, max_dp, bir, min_score = 0.6, 1.0, 0.8, 5.0
 
         n_puzzles = int(data.get("n_puzzles", 10))
         min_move = int(data.get("min_move", 5))
@@ -478,7 +596,7 @@ def create_app() -> Flask:
         settings = RunSettings(
             min_difficulty_percentage=min_dp,
             max_difficulty_percentage=max_dp,
-            min_score=5.0,
+            min_score=min_score,
             n_puzzles=n_puzzles,
             max_played=None,
             early_timestamp=None,
@@ -504,6 +622,8 @@ def create_app() -> Flask:
             pass
         return jsonify({"ok": True, "run_id": run.identifier})
 
+    # Ensure the daily thread is started when the app is created
+    _start_daily_thread_if_needed()
     return app
 
 
