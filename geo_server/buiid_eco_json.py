@@ -64,6 +64,8 @@ def main():
         print(f'    "{code}": {json.dumps(eco_openings[code])},')
     print("}")
 
+    eco_openings["A00"] = "Irregular"
+
     # Also save to files for reuse
     with open(
         os.path.join(os.path.dirname(__file__), "..", "data", "eco_openings.json"),

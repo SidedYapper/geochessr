@@ -39,6 +39,7 @@ body {
   letter-spacing: 0.2px;
 }
 
+
 .page-title {
   position: fixed;
   top: 0;
@@ -189,6 +190,11 @@ body {
   color: var(--text);
   font-size: calc(clamp(16px, 2.2vw, 24px) * var(--meta-scale));
   text-align: center;
+}
+
+
+.small-title {
+  font-size: calc(clamp(14px, 2.0vw, 20px) * var(--meta-scale));
 }
 
 /* Keep title neutral (no red/green overrides) */
@@ -505,18 +511,20 @@ input[type=range] {
   }
   .board,
   .board-8 {
-    max-width: min(92vw, calc(49vh - 140px), 560px);
+    max-width: min(92vw, calc(47vh - 140px), 560px);
   }
   .board-shell {
-    max-width: min(92vw, calc(49vh - 140px), 560px);
+    max-width: min(92vw, calc(47vh - 140px), 560px);
   }
   .meta {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 5vw;
     margin-top: 0;
-    width: 50%;
+    width: auto; 
+    max-width: 100%;
     margin-left: -5vw;
+    justify-content: center;
   }
   .meta > .meta-card,
   .meta > .feedback-card {

@@ -23,6 +23,28 @@ let currentRunIndex = 0;
 let currentRunLen = 0;
 let currentRunSubmissions = []; // Track all submissions for the current run
 
+// Sound effects
+let sfxCorrect = null;
+let sfxIncorrect = null;
+let sfxRunFinished = null;
+
+// Share-link helper for first puzzle prompt (non-daily)
+let shareCopyHandler = null;
+
+function playSfx(kind) {
+  try {
+    let audio = null;
+    if (kind === 'run_finished') audio = sfxRunFinished;
+    else if (kind === 'correct') audio = sfxCorrect;
+    else if (kind === 'incorrect') audio = sfxIncorrect;
+    if (!audio) return;
+    audio.currentTime = 0;
+    // Ignore possible play() promise rejections due to autoplay policies
+    const p = audio.play();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } catch (_) {}
+}
+
 function createBoardSquares(rows, cols) {
   boardEl.innerHTML = '';
   boardEl.style.setProperty('--rows', String(rows));
@@ -144,6 +166,13 @@ document.addEventListener('DOMContentLoaded', function() {
   currentRunId = window.RUN_ID || null;
   currentRunIndex = Number(window.RUN_INDEX || 0);
   currentRunLen = Number(window.RUN_LEN || 0);
+  // Initialize sounds after first user gesture will be required by browsers; creating upfront is fine
+  try {
+    sfxCorrect = new Audio('/assets/sound/correct.mp3');
+    sfxIncorrect = new Audio('/assets/sound/incorrect.mp3');
+    sfxRunFinished = new Audio('/assets/sound/run_finished.mp3');
+    [sfxCorrect, sfxIncorrect, sfxRunFinished].forEach(a => { if (a) a.preload = 'auto'; });
+  } catch (_) {}
   // Update titles with daily flag if applicable
   try {
     if (window.IS_DAILY) {
@@ -207,6 +236,41 @@ document.addEventListener('DOMContentLoaded', function() {
     }, 100);
   }
 
+  // For the first puzzle of non-daily runs, show an initial share prompt
+  try {
+    if (!window.IS_DAILY && currentRunIndex === 0 && !priorSub) {
+      const card = document.getElementById('feedbackCard');
+      const title = document.getElementById('feedbackTitle');
+      const nextBtn = document.getElementById('nextButton');
+      if (card && title && nextBtn) {
+        card.style.display = 'grid';
+        card.classList.remove('success', 'error');
+        title.textContent = 'You can share your run link with a friend, so they can try the same puzzles';
+        title.classList.add('small-title');
+        nextBtn.classList.remove('success', 'error', 'new-run');
+        nextBtn.textContent = 'Copy run link';
+        // Bind copy action (avoid duplicate binding)
+        if (!nextBtn.dataset.shareBound) {
+          shareCopyHandler = async () => {
+            try {
+              const url = window.location.href;
+              await navigator.clipboard.writeText(url);
+              const old = nextBtn.textContent;
+              nextBtn.textContent = 'Copied!';
+              setTimeout(() => { nextBtn.textContent = old; }, 1500);
+            } catch (_) {
+              const old = nextBtn.textContent;
+              nextBtn.textContent = 'Failed';
+              setTimeout(() => { nextBtn.textContent = old; }, 1500);
+            }
+          };
+          nextBtn.addEventListener('click', shareCopyHandler);
+          nextBtn.dataset.shareBound = '1';
+        }
+      }
+    }
+  } catch (_) {}
+
   // Bottom menu bindings
   const btnNewRun = document.getElementById('btnNewRun');
   const btnGithub = document.getElementById('btnGithub');
@@ -230,7 +294,7 @@ document.addEventListener('DOMContentLoaded', function() {
     modalClose.addEventListener('click', () => { modal.style.display = 'none'; });
   }
   if (btnGithub) {
-    btnGithub.addEventListener('click', () => { window.location.href = 'https://github.com/yannikkellerde/geochessr'; });
+    btnGithub.addEventListener('click', () => { window.open('https://github.com/yannikkellerde/geochessr', '_blank', 'noopener,noreferrer'); });
   }
   if (btnAbout) {
     btnAbout.addEventListener('click', () => {
@@ -279,7 +343,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const diff = Number(rsDifficulty.value || 1);
       const payload = {
         difficulty: diff,
-        n_puzzles: Number(rsNPuzzles.value || 10),
+        n_puzzles: Number(rsNPuzzles.value || 8),
         min_move: Number(rsMinMove.value || 5),
         max_move: Number(rsMaxMove.value || 20),
       };
@@ -510,6 +574,13 @@ async function submitBoard8Selection() {
         correct: data.correct
       };
     }
+
+    // Play sound: if last puzzle, play run finished, else correct/incorrect
+    try {
+      const isLastPuzzle = (currentRunIndex === currentRunLen - 1);
+      if (isLastPuzzle) playSfx('run_finished');
+      else playSfx(data && data.correct ? 'correct' : 'incorrect');
+    } catch (_) {}
     
     showResultMessage(data);
     if (!data.correct) {
@@ -564,6 +635,7 @@ function showResultMessage(resp) {
     card.style.display = 'grid';
     card.classList.remove('success', 'error');
     title.textContent = resp.correct ? 'Success' : 'Incorrect';
+    title.classList.remove('small-title');
     card.classList.add(resp.correct ? 'success' : 'error');
     nextBtn.classList.remove('success', 'error', 'new-run');
     
@@ -581,6 +653,12 @@ function showResultMessage(resp) {
       nextBtn.style.display = 'block';
       nextBtn.textContent = 'Next';
       nextBtn.classList.add(resp.correct ? 'success' : 'error');
+      // If we previously converted Next into a share-link button, restore its handler
+      if (nextBtn.dataset.shareBound && shareCopyHandler) {
+        try { nextBtn.removeEventListener('click', shareCopyHandler); } catch(_) {}
+        delete nextBtn.dataset.shareBound;
+        shareCopyHandler = null;
+      }
       // Attach the handler once
       if (!nextBtn.dataset.bound) {
         nextBtn.addEventListener('click', handleNextClick);
@@ -778,10 +856,9 @@ async function handleNextClick() {
       setText('metaWhiteElo', data.game_meta.whiteElo || '');
       setText('metaOpening', data.game_meta.opening_name || '');
       setText('metaBlackElo', data.game_meta.blackElo || '');
-      setText('metaTime', data.game_meta.timeControl || '');
       setText('metaMove', data.game_meta.moveNum || '');
     } else {
-      setText('metaResult', ''); setText('metaWhiteElo', ''); setText('metaBlackElo', ''); setText('metaTime', ''); setText('metaMove', '');
+      setText('metaResult', ''); setText('metaWhiteElo', ''); setText('metaBlackElo', ''); setText('metaMove', '');
     }
     // Reset URL link
     const link = document.getElementById('metaGameLink');
@@ -791,7 +868,7 @@ async function handleNextClick() {
     const card = document.getElementById('feedbackCard');
     if (card) { card.style.display = 'none'; card.classList.remove('success', 'error'); }
     const title = document.getElementById('feedbackTitle');
-    if (title) { title.textContent = ''; }
+    if (title) { title.textContent = ''; title.classList.remove('small-title'); }
     const runSummary = document.getElementById('runSummary');
     if (runSummary) { runSummary.style.display = 'none'; }
     const nextBtn = document.getElementById('nextButton');

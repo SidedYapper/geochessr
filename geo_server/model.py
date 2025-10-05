@@ -1,15 +1,20 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
 
 class ChessGame(BaseModel):
     result: float
-    url: str
     whiteElo: int
     blackElo: int
     timeControl: str
     gameId: str
+    url: Optional[str] = None
+    year: Optional[int] = None
     eco: Optional[str] = None
+    whitePlayer: Optional[str] = None
+    blackPlayer: Optional[str] = None
+    source: Optional[str] = None
+    source_file: Optional[str] = None
 
 
 class GeoChess(BaseModel):
@@ -45,9 +50,20 @@ class RunSettings(BaseModel):
     max_difficulty_percentage: Optional[float] = None
     min_score: float = 5.0
     n_puzzles: int = 5
+    metadata_fields: list[str] = Field(
+        default_factory=lambda: [
+            "result",
+            "whiteElo",
+            "blackElo",
+            "moveNum",
+            "opening_name",
+            "url",
+        ]
+    )
     max_played: Optional[int] = None
     early_timestamp: Optional[int] = None
     late_timestamp: Optional[int] = None
     min_move_num: Optional[int] = None
     max_move_num: Optional[int] = None
     black_info_rate: float = 0.0
+    source: Optional[str] = None

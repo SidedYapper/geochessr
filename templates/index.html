@@ -26,7 +26,6 @@
           <div class="meta-row"><span class="meta-label">Result</span><span id="metaResult" class="meta-value">{{ (game_meta.result or '') if game_meta else '' }}</span></div>
           <div class="meta-row"><span class="meta-label">White ELO</span><span id="metaWhiteElo" class="meta-value">{{ (game_meta.whiteElo or '') if game_meta else '' }}</span></div>
           <div class="meta-row"><span class="meta-label">Black ELO</span><span id="metaBlackElo" class="meta-value">{{ (game_meta.blackElo or '') if game_meta else '' }}</span></div>
-          <div class="meta-row"><span class="meta-label">Time</span><span id="metaTime" class="meta-value">{{ (game_meta.timeControl or '') if game_meta else '' }}</span></div>
           <div class="meta-row"><span class="meta-label">Move #</span><span id="metaMove" class="meta-value">{{ (game_meta.moveNum or '') if game_meta else '' }}</span></div>
           <div class="meta-row"><span class="meta-label">Opening</span><span id="metaOpening" class="meta-value meta-small">{{ (game_meta.opening_name or '') if game_meta else '' }}</span></div>
           <div class="meta-row"><span class="meta-label">URL</span><span class="meta-value"><a id="metaGameLink" href="#" target="_blank" rel="noopener noreferrer"></a></span></div>

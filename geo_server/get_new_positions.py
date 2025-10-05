@@ -129,6 +129,7 @@ def compute_subfen_stats(geo_chess: GeoChess):
     stats["black_count"] = stats["black_piece_count"] + stats["black_pawn_count"]
     stats["piece_count"] = stats["white_piece_count"] + stats["black_piece_count"]
     stats["piece_pawn_count"] = stats["white_count"] + stats["black_count"]
+    stats["king_count"] = subfen.count("K") + subfen.count("k")
 
     stats["last_move_in_subfen"] = any(
         [
@@ -159,6 +160,7 @@ def compute_difficulty(geo_chess: GeoChess):
         - stats["unmoved_piece_pawn_count"]
         - stats["last_move_in_subfen"]
         - geo_chess.dimx * geo_chess.dimy
+        - int(stats["king_count"] > 0) * 2
         + geo_chess.move_num // 3
     )
     geo_chess.difficulty = difficulty
@@ -189,9 +191,10 @@ def unsimplify_subfen(subfen: str):
 def create_and_store_geochess_from_pgn(
     pgn_file: str,
     sqlite_wrapper: SQLiteWrapper,
-    dims: tuple = ((3, 3), (2, 4), (4, 2)),
+    dims: tuple = ((3, 3), (2, 4), (4, 2), (3, 2), (2, 3)),
     min_score: float = 5.0,
     rate: float = 0.1,
+    source: str = "lichess",
 ):
     for game in tqdm(
         parse_games_from_pgn(pgn_file),
@@ -207,6 +210,15 @@ def create_and_store_geochess_from_pgn(
             timeControl=game.headers["TimeControl"],
             gameId=game.headers["GameId"],
             eco=game.headers["ECO"] if "ECO" in game.headers else None,
+            whitePlayer=game.headers["White"],
+            blackPlayer=game.headers["Black"],
+            source=source,
+            source_file=pgn_file,
+            year=(
+                int(game.headers["Date"].split(".")[0])
+                if "Date" in game.headers
+                else None
+            ),
         )
         for board in extract_fens_from_game(game):
             fen = board.fen()
@@ -241,6 +253,14 @@ def add_geochess_to_database(sqlite_wrapper: SQLiteWrapper, n_tournaments: int =
         i += 1
         if i >= n_tournaments:
             break
+
+
+def store_the_world_champion_games(sqlite_wrapper: SQLiteWrapper):
+    pgns_path = "data/world_champion_games"
+    for pgn_file in os.listdir(pgns_path):
+        create_and_store_geochess_from_pgn(
+            os.path.join(pgns_path, pgn_file), sqlite_wrapper, source="world_champion"
+        )
 
 
 if __name__ == "__main__":

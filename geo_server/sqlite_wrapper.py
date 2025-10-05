@@ -19,7 +19,7 @@ class SQLiteWrapper:
             "CREATE TABLE IF NOT EXISTS geo_chess (id INTEGER PRIMARY KEY AUTOINCREMENT, fen TEXT, subfen TEXT, posx INTEGER, posy INTEGER, dimx INTEGER, dimy INTEGER, move_num INTEGER, last_move TEXT, gameId TEXT, white_to_move INTEGER, score REAL, difficulty REAL, successes INTEGER DEFAULT 0, fails INTEGER DEFAULT 0, timestamp_added REAL)"
         )
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS chess_games (result REAL, url TEXT, whiteElo INTEGER, blackElo INTEGER, timeControl TEXT, gameId TEXT PRIMARY KEY, eco TEXT)"
+            "CREATE TABLE IF NOT EXISTS chess_games (result REAL, url TEXT, whiteElo INTEGER, blackElo INTEGER, timeControl TEXT, gameId TEXT PRIMARY KEY, eco TEXT, whitePlayer TEXT, blackPlayer TEXT, source TEXT, year INTEGER, source_file TEXT)"
         )
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS runs (identifier TEXT PRIMARY KEY, is_daily INTEGER, black_info_rate REAL)"
@@ -60,7 +60,7 @@ class SQLiteWrapper:
 
     def insert_chess_game(self, chess_game: ChessGame):
         self.conn.execute(
-            "INSERT INTO chess_games (result, url, whiteElo, blackElo, timeControl, gameId, eco) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO chess_games (result, url, whiteElo, blackElo, timeControl, gameId, eco, whitePlayer, blackPlayer, source, year, source_file) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 chess_game.result,
                 chess_game.url,
@@ -69,6 +69,11 @@ class SQLiteWrapper:
                 chess_game.timeControl,
                 chess_game.gameId,
                 chess_game.eco,
+                chess_game.whitePlayer,
+                chess_game.blackPlayer,
+                chess_game.source,
+                chess_game.year,
+                chess_game.source_file,
             ),
         )
         self.conn.commit()
@@ -88,6 +93,11 @@ class SQLiteWrapper:
             timeControl=result[4],
             gameId=result[5],
             eco=result[6],
+            whitePlayer=result[7],
+            blackPlayer=result[8],
+            source=result[9],
+            year=result[10],
+            source_file=result[11],
         )
 
     def get_geo_chess(self, id: int):
