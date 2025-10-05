@@ -9,6 +9,7 @@ class ChessGame(BaseModel):
     blackElo: int
     timeControl: str
     gameId: str
+    eco: Optional[str] = None
 
 
 class GeoChess(BaseModel):
@@ -22,6 +23,31 @@ class GeoChess(BaseModel):
     last_move: str
     chess_game: ChessGame
     white_to_move: bool
-    played: int = 0
+    successes: int = 0
+    fails: int = 0
     id: Optional[int] = None
     score: Optional[float] = None
+    difficulty: Optional[float] = None
+    timestamp_added: Optional[float] = None
+
+
+class Run(BaseModel):
+    identifier: str
+    puzzle_ids: list[int]
+    is_daily: bool
+    black_info_rate: float
+
+
+class RunSettings(BaseModel):
+    min_difficulty: Optional[float] = None
+    max_difficulty: Optional[float] = None
+    min_difficulty_percentage: Optional[float] = None
+    max_difficulty_percentage: Optional[float] = None
+    min_score: float = 5.0
+    n_puzzles: int = 5
+    max_played: Optional[int] = None
+    early_timestamp: Optional[int] = None
+    late_timestamp: Optional[int] = None
+    min_move_num: Optional[int] = None
+    max_move_num: Optional[int] = None
+    black_info_rate: float = 0.0

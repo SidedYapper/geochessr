@@ -18,6 +18,10 @@ let feedbackLineEl = null;
 let isTouching = false;
 let lastTouchWithinBoard = false;
 let suppressNextClick = false;
+let currentRunId = null;
+let currentRunIndex = 0;
+let currentRunLen = 0;
+let currentRunSubmissions = []; // Track all submissions for the current run
 
 function createBoardSquares(rows, cols) {
   boardEl.innerHTML = '';
@@ -137,6 +141,20 @@ document.addEventListener('DOMContentLoaded', function() {
   updateBoardFromInput();
   initBoard8();
   geochessId = window.GEOCHESS_ID || null;
+  currentRunId = window.RUN_ID || null;
+  currentRunIndex = Number(window.RUN_INDEX || 0);
+  currentRunLen = Number(window.RUN_LEN || 0);
+  
+  // Initialize submissions array from server data or create empty array
+  const allSubs = Array.isArray(window.ALL_SUBMISSIONS) ? window.ALL_SUBMISSIONS : [];
+  currentRunSubmissions = new Array(currentRunLen).fill(null);
+  // Populate with any existing submissions
+  allSubs.forEach((sub, idx) => {
+    if (idx < currentRunSubmissions.length && sub) {
+      currentRunSubmissions[idx] = sub;
+    }
+  });
+  
   const lm = Array.isArray(window.LAST_MOVE_CELLS) ? window.LAST_MOVE_CELLS : [];
   if (lm.length) {
     // Apply highlight after first render (slight delay to ensure squares exist)
@@ -166,6 +184,103 @@ document.addEventListener('DOMContentLoaded', function() {
     if (boardsWrapper) ro.observe(boardsWrapper);
   } catch (_) {
     // ResizeObserver not supported; window resize listener will suffice
+  }
+
+  // Check if user already submitted this puzzle (prior_submission from server)
+  const priorSub = window.PRIOR_SUBMISSION;
+  if (priorSub && typeof priorSub === 'object' && typeof priorSub.x === 'number' && typeof priorSub.y === 'number') {
+    // Immediately show feedback state
+    setTimeout(() => {
+      replayPriorSubmission(priorSub.x, priorSub.y, priorSub.correct);
+    }, 100);
+  }
+
+  // Bottom menu bindings
+  const btnNewRun = document.getElementById('btnNewRun');
+  const btnGithub = document.getElementById('btnGithub');
+  const btnAbout = document.getElementById('btnAbout');
+  const modal = document.getElementById('runModal');
+  const modalClose = document.getElementById('runModalClose');
+  const rsDifficulty = document.getElementById('rsDifficulty');
+  const rsDifficultyLabel = document.getElementById('rsDifficultyLabel');
+  const rsNPuzzles = document.getElementById('rsNPuzzles');
+  const rsNPuzzlesVal = document.getElementById('rsNPuzzlesVal');
+  const rsMinMove = document.getElementById('rsMinMove');
+  const rsMaxMove = document.getElementById('rsMaxMove');
+  const rsMinMoveVal = document.getElementById('rsMinMoveVal');
+  const rsMaxMoveVal = document.getElementById('rsMaxMoveVal');
+  const runCreateBtn = document.getElementById('runCreateBtn');
+
+  if (btnNewRun && modal) {
+    btnNewRun.addEventListener('click', () => { modal.style.display = 'grid'; });
+  }
+  if (modalClose && modal) {
+    modalClose.addEventListener('click', () => { modal.style.display = 'none'; });
+  }
+  if (btnGithub) {
+    btnGithub.addEventListener('click', () => { /* noop for now */ });
+  }
+  if (btnAbout) {
+    btnAbout.addEventListener('click', () => { /* noop for now */ });
+  }
+
+  const diffBuckets = [
+    { name: 'Easy', range: '0%–30%', min: 0.0, max: 0.3, bir: 0.0 },
+    { name: 'Normal', range: '20%–60%', min: 0.2, max: 0.6, bir: 0.2 },
+    { name: 'Hard', range: '40%–80%', min: 0.4, max: 0.8, bir: 0.5 },
+    { name: 'Extra Hard', range: '60%–100%', min: 0.6, max: 1.0, bir: 0.8 },
+  ];
+  function updateDiffLabel() {
+    const b = diffBuckets[Number(rsDifficulty.value) || 0];
+    rsDifficultyLabel.textContent = `${b.name} (${b.range})`;
+  }
+  if (rsDifficulty && rsDifficultyLabel) {
+    rsDifficulty.addEventListener('input', updateDiffLabel);
+    updateDiffLabel();
+  }
+  function clampMinMax() {
+    let minv = Number(rsMinMove.value || 0);
+    let maxv = Number(rsMaxMove.value || 0);
+    if (minv > maxv) {
+      // keep handles ordered
+      if (this === rsMinMove) rsMaxMove.value = String(minv);
+      else rsMinMove.value = String(maxv);
+      minv = Number(rsMinMove.value); maxv = Number(rsMaxMove.value);
+    }
+    rsMinMoveVal.textContent = String(minv);
+    rsMaxMoveVal.textContent = String(maxv);
+  }
+  if (rsMinMove && rsMaxMove) {
+    rsMinMove.addEventListener('input', clampMinMax);
+    rsMaxMove.addEventListener('input', clampMinMax);
+    clampMinMax();
+  }
+  if (rsNPuzzles && rsNPuzzlesVal) {
+    rsNPuzzles.addEventListener('input', () => { rsNPuzzlesVal.textContent = String(rsNPuzzles.value); });
+    rsNPuzzlesVal.textContent = String(rsNPuzzles.value);
+  }
+
+  if (runCreateBtn) {
+    runCreateBtn.addEventListener('click', async () => {
+      const diff = Number(rsDifficulty.value || 1);
+      const payload = {
+        difficulty: diff,
+        n_puzzles: Number(rsNPuzzles.value || 10),
+        min_move: Number(rsMinMove.value || 5),
+        max_move: Number(rsMaxMove.value || 20),
+      };
+      try {
+        const res = await fetch('/api/create_run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (data && data.ok && data.run_id) {
+          window.location.assign(`/run/${encodeURIComponent(data.run_id)}`);
+        }
+      } catch (_) { /* silent */ }
+    });
   }
 });
 
@@ -200,6 +315,42 @@ function clearBoard8Overlay() {
   if (feedbackLineEl) {
     feedbackLineEl.remove();
     feedbackLineEl = null;
+  }
+}
+
+function showBoard8OverlayAtPosition(topLeftRow, topLeftCol) {
+  // Display mock FEN pieces on 8x8 board at specific top-left position
+  let parsed;
+  try {
+    parsed = parseMockFen(currentFen);
+  } catch (e) {
+    return;
+  }
+
+  const { rows, cols, cells } = parsed;
+
+  // Place pieces aligned to 8x8 grid
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
+      const ch = cells[r * cols + c];
+      if (!ch) continue;
+      const targetRow = topLeftRow + r;
+      const targetCol = topLeftCol + c;
+      if (targetRow < 0 || targetRow > 7 || targetCol < 0 || targetCol > 7) continue;
+      const square = document.getElementById(`b8-${targetRow}-${targetCol}`);
+      if (!square) continue;
+      // Render overlay image exactly inside the square
+      const img = document.createElement('img');
+      img.className = 'b8-overlay';
+      img.alt = `Overlay ${ch}`;
+      img.src = pieceToAssetPath(ch);
+      img.style.width = '74%';
+      img.style.height = '74%';
+      img.style.objectFit = 'contain';
+      img.style.pointerEvents = 'none';
+      img.style.filter = 'drop-shadow(0 1px 1px rgba(0,0,0,0.25))';
+      square.appendChild(img);
+    }
   }
 }
 
@@ -336,6 +487,16 @@ async function submitBoard8Selection() {
       body: JSON.stringify(payload)
     });
     const data = await res.json();
+    
+    // Track this submission in the client-side array
+    if (data && data.ok === true && currentRunIndex >= 0 && currentRunIndex < currentRunSubmissions.length) {
+      currentRunSubmissions[currentRunIndex] = {
+        x: payload.x,
+        y: payload.y,
+        correct: data.correct
+      };
+    }
+    
     showResultMessage(data);
     if (!data.correct) {
       drawFeedbackLine(lastOverlayTopLeft, { col: data.answer.x, row: data.answer.y });
@@ -357,6 +518,7 @@ async function submitBoard8Selection() {
       }
     }
   } catch (e) {
+    console.error(e);
     showResultMessage({ ok: false, error: 'Network error' });
   }
 }
@@ -364,7 +526,12 @@ async function submitBoard8Selection() {
 function showResultMessage(resp) {
   if (!errorEl) return;
   if (!resp || resp.ok !== true) {
-    errorEl.textContent = 'Submission failed.';
+    if (resp && resp.error) {
+      console.error(resp);
+      errorEl.textContent = resp.error;
+    } else {
+      errorEl.textContent = 'Submission failed.';
+    }
     return;
   }
   if (!resp.correct) {
@@ -377,24 +544,188 @@ function showResultMessage(resp) {
   const card = document.getElementById('feedbackCard');
   const title = document.getElementById('feedbackTitle');
   const nextBtn = document.getElementById('nextButton');
+  const runSummary = document.getElementById('runSummary');
+  
   if (card && title && nextBtn) {
     card.style.display = 'grid';
     card.classList.remove('success', 'error');
     title.textContent = resp.correct ? 'Success' : 'Incorrect';
     card.classList.add(resp.correct ? 'success' : 'error');
-    nextBtn.classList.remove('success', 'error');
-    nextBtn.classList.add(resp.correct ? 'success' : 'error');
-    // Attach the handler once
-    if (!nextBtn.dataset.bound) {
-      nextBtn.addEventListener('click', handleNextClick);
-      nextBtn.dataset.bound = '1';
+    nextBtn.classList.remove('success', 'error', 'new-run');
+    
+    // Check if this is the last puzzle
+    const isLastPuzzle = (currentRunIndex === currentRunLen - 1);
+    
+    if (isLastPuzzle) {
+      // Hide Next button and show run summary
+      nextBtn.style.display = 'none';
+      if (runSummary) {
+        showRunSummary();
+      }
+    } else {
+      // Show Next button with success/error styling
+      nextBtn.style.display = 'block';
+      nextBtn.textContent = 'Next';
+      nextBtn.classList.add(resp.correct ? 'success' : 'error');
+      // Attach the handler once
+      if (!nextBtn.dataset.bound) {
+        nextBtn.addEventListener('click', handleNextClick);
+        nextBtn.dataset.bound = '1';
+      }
     }
+  }
+}
+
+function showRunSummary() {
+  const runSummary = document.getElementById('runSummary');
+  const boxesContainer = document.getElementById('runSummaryBoxes');
+  const scoreEl = document.getElementById('runSummaryScore');
+  const nextBtn = document.getElementById('nextButton');
+  
+  if (!runSummary || !boxesContainer || !scoreEl) return;
+  
+  // Use client-side tracked submissions
+  const allSubmissions = currentRunSubmissions || [];
+  
+  // Clear previous content
+  boxesContainer.innerHTML = '';
+  
+  // Count correct submissions
+  let correctCount = 0;
+  
+  // Create a box for each submission
+  allSubmissions.forEach((sub, idx) => {
+    if (!sub) return; // Skip null/undefined submissions
+    
+    const box = document.createElement('div');
+    box.className = 'run-summary-box';
+    
+    if (sub.correct) {
+      box.classList.add('correct');
+      box.innerHTML = '✓';
+      correctCount++;
+    } else {
+      box.classList.add('incorrect');
+      box.innerHTML = '✕';
+    }
+    
+    boxesContainer.appendChild(box);
+  });
+  
+  // Show score
+  scoreEl.textContent = `You solved ${correctCount}/${allSubmissions.length} correctly.`;
+  
+  // Show the summary
+  runSummary.style.display = 'flex';
+  
+  // Setup "Copy run link" button
+  const copyLinkBtn = document.getElementById('copyRunLinkBtn');
+  if (copyLinkBtn && !copyLinkBtn.dataset.bound) {
+    copyLinkBtn.addEventListener('click', async () => {
+      try {
+        const url = window.location.href;
+        await navigator.clipboard.writeText(url);
+        // Visual feedback
+        copyLinkBtn.textContent = 'Copied!';
+        copyLinkBtn.classList.add('copied');
+        setTimeout(() => {
+          copyLinkBtn.textContent = 'Copy run link';
+          copyLinkBtn.classList.remove('copied');
+        }, 2000);
+      } catch (err) {
+        console.error('Failed to copy:', err);
+        copyLinkBtn.textContent = 'Failed';
+        setTimeout(() => {
+          copyLinkBtn.textContent = 'Copy run link';
+        }, 2000);
+      }
+    });
+    copyLinkBtn.dataset.bound = '1';
+  }
+  
+  // Show "Start new run" button
+  if (nextBtn) {
+    nextBtn.style.display = 'block';
+    nextBtn.textContent = 'Start new run';
+    nextBtn.classList.remove('success', 'error');
+    nextBtn.classList.add('new-run');
+    
+    // Replace click handler to open new run modal
+    if (!nextBtn.dataset.newRunBound) {
+      nextBtn.removeEventListener('click', handleNextClick);
+      nextBtn.addEventListener('click', () => {
+        const modal = document.getElementById('runModal');
+        if (modal) modal.style.display = 'grid';
+      });
+      nextBtn.dataset.newRunBound = '1';
+    }
+  }
+}
+
+async function replayPriorSubmission(x, y, correct) {
+  // Hide labels immediately
+  const lblL = document.getElementById('labelLeft');
+  const lblR = document.getElementById('labelRight');
+  if (lblL) lblL.style.display = 'none';
+  if (lblR) lblR.style.display = 'none';
+
+  // Set frozen state
+  overlayFrozen = true;
+  
+  // Fetch full feedback data from server
+  const id = geochessId;
+  if (!id) return;
+  const payload = { id, x, y };
+  try {
+    const res = await fetch('/api/check_position', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    
+    // Show feedback card
+    showResultMessage(data);
+    
+    // Draw feedback line if incorrect
+    if (!data.correct) {
+      const submitted = { col: x, row: y };
+      const answer = { col: data.answer.x, row: data.answer.y };
+      drawFeedbackLine(submitted, answer);
+    }
+    
+    // Display the pieces on the right board at submitted position
+    showBoard8OverlayAtPosition(y, x);
+    
+    // Switch left board to full FEN
+    if (data && typeof data.fullFen === 'string' && data.fullFen.length > 0) {
+      const placement = data.fullFen.split(' ')[0];
+      currentFen = placement;
+      topLeftLight = true;
+      updateBoardFromInput();
+      if (Array.isArray(data.lastMoveCells) && data.lastMoveCells.length) {
+        setTimeout(() => highlightAbsoluteLastMove(data.lastMoveCells), 0);
+      }
+    }
+    
+    // Update game link
+    if (data && data.gameId && typeof data.halfMoveNum === 'number') {
+      const link = document.getElementById('metaGameLink');
+      if (link) {
+        link.textContent = data.gameId;
+        link.href = `https://lichess.org/${data.gameId}/#${data.halfMoveNum}`;
+      }
+    }
+  } catch (e) {
+    console.error(e);
+    showResultMessage({ ok: false, error: 'Network error' });
   }
 }
 
 async function handleNextClick() {
   try {
-    const res = await fetch('/api/next');
+    if (!currentRunId) return;
+    const res = await fetch(`/api/next/${encodeURIComponent(currentRunId)}?index=${encodeURIComponent(currentRunIndex)}`);
     const data = await res.json();
     if (!data || data.ok !== true) return;
     // Reset dynamic state to initial
@@ -406,8 +737,10 @@ async function handleNextClick() {
 
     // Update left board from new subfen and parity
     currentFen = (data.initial_subfen || '').trim();
-    // Update active GeoChess id for subsequent submissions
+    // Update run state and active GeoChess id
     geochessId = data.geochess_id || null;
+    currentRunIndex = Number(data.index || (currentRunIndex + 1));
+    currentRunLen = Number(data.len || currentRunLen);
     // Clear any stale hover selection
     lastOverlayTopLeft = null;
     if (typeof data.top_left_light === 'boolean') {
@@ -424,9 +757,12 @@ async function handleNextClick() {
 
     // Update meta panel
     const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val ?? ''; };
+    // Update puzzle number
+    setText('metaPuzzleNum', `${currentRunIndex + 1}/${currentRunLen}`);
     if (data.game_meta) {
       setText('metaResult', data.game_meta.result || '');
       setText('metaWhiteElo', data.game_meta.whiteElo || '');
+      setText('metaOpening', data.game_meta.opening_name || '');
       setText('metaBlackElo', data.game_meta.blackElo || '');
       setText('metaTime', data.game_meta.timeControl || '');
       setText('metaMove', data.game_meta.moveNum || '');
@@ -437,13 +773,24 @@ async function handleNextClick() {
     const link = document.getElementById('metaGameLink');
     if (link) { link.textContent = ''; link.removeAttribute('href'); }
 
-    // Hide feedback card
+    // Hide feedback card and run summary
     const card = document.getElementById('feedbackCard');
     if (card) { card.style.display = 'none'; card.classList.remove('success', 'error'); }
     const title = document.getElementById('feedbackTitle');
     if (title) { title.textContent = ''; }
+    const runSummary = document.getElementById('runSummary');
+    if (runSummary) { runSummary.style.display = 'none'; }
     const nextBtn = document.getElementById('nextButton');
-    if (nextBtn) { nextBtn.classList.remove('success', 'error'); }
+    if (nextBtn) {
+      nextBtn.classList.remove('success', 'error', 'new-run');
+      nextBtn.textContent = 'Next';
+      // Hide Next button entirely if last puzzle reached
+      if (data.is_last === true) {
+        nextBtn.style.display = 'none';
+      } else {
+        nextBtn.style.display = 'block';
+      }
+    }
     // Re-apply layout sizing after new position
     applyLayoutSizing();
     // Hide initial labels permanently after first submission

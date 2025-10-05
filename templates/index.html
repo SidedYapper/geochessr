@@ -22,15 +22,22 @@
       </div>
       <aside class="meta" aria-label="Game meta">
         <div class="meta-card">
+          <div class="meta-row"><span class="meta-label">Puzzle #</span><span id="metaPuzzleNum" class="meta-value">{{ (run_index + 1) if run_index is not none else '' }}/{{ run_len if run_len else '' }}</span></div>
           <div class="meta-row"><span class="meta-label">Result</span><span id="metaResult" class="meta-value">{{ (game_meta.result or '') if game_meta else '' }}</span></div>
           <div class="meta-row"><span class="meta-label">White ELO</span><span id="metaWhiteElo" class="meta-value">{{ (game_meta.whiteElo or '') if game_meta else '' }}</span></div>
           <div class="meta-row"><span class="meta-label">Black ELO</span><span id="metaBlackElo" class="meta-value">{{ (game_meta.blackElo or '') if game_meta else '' }}</span></div>
           <div class="meta-row"><span class="meta-label">Time</span><span id="metaTime" class="meta-value">{{ (game_meta.timeControl or '') if game_meta else '' }}</span></div>
           <div class="meta-row"><span class="meta-label">Move #</span><span id="metaMove" class="meta-value">{{ (game_meta.moveNum or '') if game_meta else '' }}</span></div>
+          <div class="meta-row"><span class="meta-label">Opening</span><span id="metaOpening" class="meta-value meta-small">{{ (game_meta.opening_name or '') if game_meta else '' }}</span></div>
           <div class="meta-row"><span class="meta-label">URL</span><span class="meta-value"><a id="metaGameLink" href="#" target="_blank" rel="noopener noreferrer"></a></span></div>
         </div>
         <div id="feedbackCard" class="feedback-card" style="display: none;">
           <div id="feedbackTitle" class="status-title"></div>
+          <div id="runSummary" class="run-summary" style="display: none;">
+            <div id="runSummaryBoxes" class="run-summary-boxes"></div>
+            <div id="runSummaryScore" class="run-summary-score"></div>
+            <button id="copyRunLinkBtn" class="copy-link-btn" aria-label="Copy run link">Copy run link</button>
+          </div>
           <button id="nextButton" class="next-btn" aria-label="Next">Next</button>
         </div>
       </aside>
@@ -41,11 +48,58 @@
     </section>
   </main>
 
+  <!-- Bottom menu -->
+  <nav class="bottom-menu" aria-label="Utility menu">
+    <button id="btnNewRun" class="menu-btn" type="button">New Run</button>
+    <button id="btnGithub" class="menu-btn" type="button">Github</button>
+    <button id="btnAbout" class="menu-btn" type="button">About</button>
+  </nav>
+
+  <!-- New Run modal -->
+  <div id="runModal" class="modal-overlay" style="display:none;">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="runModalTitle">
+      <div class="modal-header">
+        <h3 id="runModalTitle" class="modal-title">Create a new run</h3>
+        <button id="runModalClose" class="modal-close" aria-label="Close">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-row">
+          <label class="form-label">Difficulty</label>
+          <input id="rsDifficulty" type="range" min="0" max="3" value="1" step="1" />
+          <div class="form-hint" id="rsDifficultyLabel">Normal (0%–30%)</div>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label">Number of puzzles</label>
+          <input id="rsNPuzzles" type="range" min="1" max="50" value="10" />
+          <div class="form-hint">Selected: <span id="rsNPuzzlesVal">10</span></div>
+        </div>
+
+        <div class="form-row">
+          <label class="form-label">Move range</label>
+          <div class="dual-range">
+            <input id="rsMinMove" type="range" min="0" max="100" value="5" />
+            <input id="rsMaxMove" type="range" min="0" max="100" value="20" />
+          </div>
+          <div class="form-hint">From <span id="rsMinMoveVal">5</span> to <span id="rsMaxMoveVal">20</span></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="runCreateBtn" class="primary-btn" type="button">Create run</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     window.INITIAL_SUBFEN = {{ (initial_subfen or '')|tojson }};
     window.GEOCHESS_ID = {{ (geochess_id or '')|tojson }};
     window.LAST_MOVE_CELLS = {{ (last_move_cells or [])|tojson }};
     window.TOP_LEFT_LIGHT = {{ (top_left_light if top_left_light is not none else '')|tojson }};
+    window.RUN_ID = {{ (run_id or '')|tojson }};
+    window.RUN_INDEX = {{ (run_index if run_index is not none else 0)|tojson }};
+    window.RUN_LEN = {{ (run_len if run_len is not none else 0)|tojson }};
+    window.PRIOR_SUBMISSION = {{ (prior_submission or None)|tojson }};
+    window.ALL_SUBMISSIONS = {{ (all_submissions or [])|tojson }};
   </script>
   <script src="{{ url_for('scripts', filename='main.js') }}"></script>
 </body>

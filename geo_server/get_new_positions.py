@@ -1,4 +1,6 @@
 import requests
+from functools import reduce
+from operator import mul
 from typing import Optional
 import os
 import chess.pgn
@@ -6,6 +8,9 @@ import random
 from geo_server.model import GeoChess, ChessGame
 from geo_server.sqlite_wrapper import SQLiteWrapper
 from tqdm import tqdm
+import time
+
+og_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
 
 def parse_result(result: str):
@@ -15,6 +20,14 @@ def parse_result(result: str):
         return 0
     else:
         return 0.5
+
+
+def parse_move(move: str) -> tuple[tuple[int, int], tuple[int, int]]:
+    letters = "abcdefgh"
+    return (letters.index(move[0]), int(move[1])), (
+        letters.index(move[2]),
+        int(move[3]),
+    )
 
 
 def get_valid_tournament_ids():
@@ -83,28 +96,87 @@ def simplify_fen(fen: str):
     return fen
 
 
-def cutout_random_subfen(fen: str, subfen_dims: tuple[int, int] = (3, 3)):
+def cutout_subfen(
+    fen: str, posx: int, posy: int, subfen_dims: tuple[int, int] = (3, 3)
+):
     fen = simplify_fen(fen)
     rows = fen.split("/")
-    posx = random.randint(0, 8 - subfen_dims[0])
-    posy = random.randint(0, 8 - subfen_dims[1])
     subfen = "/".join(
         [
             row[posx : posx + subfen_dims[0]]
             for row in rows[posy : posy + subfen_dims[1]]
         ]
     )
-    return subfen, posx, posy
+    return subfen
+
+
+def cutout_random_subfen(fen: str, subfen_dims: tuple[int, int] = (3, 3)):
+    posx = random.randint(0, 8 - subfen_dims[0])
+    posy = random.randint(0, 8 - subfen_dims[1])
+    return cutout_subfen(fen, posx, posy, subfen_dims), posx, posy
+
+
+def compute_subfen_stats(geo_chess: GeoChess):
+    stats = {}
+    subfen = geo_chess.subfen
+    last_move = parse_move(geo_chess.last_move)
+    stats["white_pawn_count"] = subfen.count("P")
+    stats["black_pawn_count"] = subfen.count("p")
+    stats["pawn_count"] = stats["white_pawn_count"] + stats["black_pawn_count"]
+    stats["white_piece_count"] = sum(c in "KQRBN" for c in subfen)
+    stats["black_piece_count"] = sum(c in "kqrbn" for c in subfen)
+    stats["white_count"] = stats["white_piece_count"] + stats["white_pawn_count"]
+    stats["black_count"] = stats["black_piece_count"] + stats["black_pawn_count"]
+    stats["piece_count"] = stats["white_piece_count"] + stats["black_piece_count"]
+    stats["piece_pawn_count"] = stats["white_count"] + stats["black_count"]
+
+    stats["last_move_in_subfen"] = any(
+        [
+            geo_chess.posx <= x < geo_chess.posx + geo_chess.dimx
+            and geo_chess.posy <= y < geo_chess.posy + geo_chess.dimy
+            for x, y in last_move
+        ]
+    )
+    og_cutout = cutout_subfen(
+        og_fen, geo_chess.posx, geo_chess.posy, (geo_chess.dimx, geo_chess.dimy)
+    )
+    simple_og = simplify_fen(og_cutout)
+    simple_subfen = simplify_fen(subfen)
+    stats["unmoved_piece_pawn_count"] = sum(
+        1 for i in range(len(simple_og)) if simple_og[i] == simple_subfen[i]
+    )
+    stats["moved_piece_pawn_count"] = (
+        stats["piece_pawn_count"] - stats["unmoved_piece_pawn_count"]
+    )
+    return stats
+
+
+def compute_difficulty(geo_chess: GeoChess):
+    stats = compute_subfen_stats(geo_chess)
+    difficulty = (
+        -stats["pawn_count"]
+        - stats["piece_count"]
+        - stats["unmoved_piece_pawn_count"]
+        - stats["last_move_in_subfen"]
+        - geo_chess.dimx * geo_chess.dimy
+        + geo_chess.move_num // 3
+    )
+    geo_chess.difficulty = difficulty
 
 
 def score_subfen(geo_chess: GeoChess):
-    subfen = geo_chess.subfen
-    has_pawns = "p" in subfen or "P" in subfen
-    has_pieces = any(c in subfen for c in "KQRBN")
-    has_white = any(c in subfen for c in "KQRBNP")
-    has_black = any(c in subfen for c in "kqrbnp")
+    stats = compute_subfen_stats(geo_chess)
     early_move = geo_chess.move_num < 15
-    score = has_pawns + has_pieces + has_white + has_black + early_move
+    score = (
+        early_move
+        + stats["last_move_in_subfen"]
+        + (stats["moved_piece_pawn_count"] > 1)
+        + (stats["pawn_count"] > 0)
+        + (stats["white_piece_count"] > 0)
+        + (stats["black_piece_count"] > 0)
+        + (stats["piece_count"] > 0)
+    )
+
     geo_chess.score = score
 
 
@@ -118,7 +190,8 @@ def create_and_store_geochess_from_pgn(
     pgn_file: str,
     sqlite_wrapper: SQLiteWrapper,
     dims: tuple = ((3, 3), (2, 4), (4, 2)),
-    min_score: float = 4.0,
+    min_score: float = 5.0,
+    rate: float = 0.1,
 ):
     for game in tqdm(
         parse_games_from_pgn(pgn_file),
@@ -133,10 +206,13 @@ def create_and_store_geochess_from_pgn(
             blackElo=game.headers["BlackElo"],
             timeControl=game.headers["TimeControl"],
             gameId=game.headers["GameId"],
+            eco=game.headers["ECO"] if "ECO" in game.headers else None,
         )
         for board in extract_fens_from_game(game):
             fen = board.fen()
             for dim in dims:
+                if random.random() > rate:
+                    continue
                 subfen, posx, posy = cutout_random_subfen(fen, dim)
                 geo_chess = GeoChess(
                     fen=fen,
@@ -149,9 +225,11 @@ def create_and_store_geochess_from_pgn(
                     dimy=dim[1],
                     last_move=str(board.move_stack[-1]),
                     white_to_move=board.turn == chess.WHITE,
+                    timestamp_added=time.time(),
                 )
                 score_subfen(geo_chess)
                 if geo_chess.score >= min_score:
+                    compute_difficulty(geo_chess)
                     sqlite_wrapper.insert_geo_chess(geo_chess)
 
 
@@ -161,7 +239,7 @@ def add_geochess_to_database(sqlite_wrapper: SQLiteWrapper, n_tournaments: int =
         path = get_games_from_tournament(tournament_id)
         create_and_store_geochess_from_pgn(path, sqlite_wrapper)
         i += 1
-        if i > n_tournaments:
+        if i >= n_tournaments:
             break
 
 
