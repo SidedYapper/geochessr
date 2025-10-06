@@ -13,15 +13,19 @@ from flask import (
     url_for,
     session,
 )
+from flask_session import Session
+import redis
 from geo_server.buiid_eco_json import get_eco_openings
 from geo_server.sqlite_wrapper import SQLiteWrapper
 from geo_server.manage_runs import create_run_and_add_to_database, RunSettings
 from geo_server.constants import metadata_fields as SOURCE_METADATA_FIELDS
+import dotenv
+import secrets
 
 
 def create_app() -> Flask:
     base_dir = os.path.abspath(os.path.dirname(__file__))
-
+    dotenv.load_dotenv()
     app = Flask(
         __name__,
         template_folder=os.path.join(base_dir, "templates"),
@@ -34,13 +38,27 @@ def create_app() -> Flask:
         ), "APP_SECRET_KEY is not set. Cannot run in production mode."
         app.secret_key = os.getenv("APP_SECRET_KEY")
     else:
-        import secrets
 
         app.secret_key = secrets.token_hex(32)
 
     styles_dir = os.path.join(base_dir, "styles")
     scripts_dir = os.path.join(base_dir, "scripts")
     assets_dir = os.path.join(base_dir, "assets")
+
+    # -------------------- Session backend selection --------------------
+    if os.getenv("FLASK_ENV") == "production":
+        # Use Redis-backed server-side sessions in production
+        redis_password = os.getenv("REDIS_PASSWORD")
+        app.config["SESSION_TYPE"] = "redis"
+        app.config["SESSION_REDIS"] = redis.Redis(
+            host="localhost", port=6379, db=0, password=redis_password
+        )
+        app.config["SESSION_USE_SIGNER"] = True  # Sign session IDs
+        app.config["SESSION_PERMANENT"] = True
+        Session(app)
+    else:
+        # Dev: keep Flask default client-side signed cookie sessions; no Redis
+        app.config.setdefault("SESSION_TYPE", "null")
 
     # -------------------- Session tracking for purge --------------------
     app.config.setdefault("SESSION_INDEX", {})  # sid -> last_access_ts (epoch seconds)
