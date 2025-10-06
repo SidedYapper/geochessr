@@ -752,13 +752,13 @@ async function submitBoard8Selection() {
     });
     const data = await res.json();
     
-    // Track this submission in the client-side array
-    if (data && data.ok === true && currentRunIndex >= 0 && currentRunIndex < currentRunSubmissions.length) {
-      currentRunSubmissions[currentRunIndex] = {
-        x: payload.x,
-        y: payload.y,
-        correct: data.correct
-      };
+    // Track this submission using authoritative server state when available
+    if (data && data.ok === true) {
+      if (Array.isArray(data.allSubmissions) && data.allSubmissions.length) {
+        currentRunSubmissions = data.allSubmissions.slice();
+      } else if (currentRunIndex >= 0 && currentRunIndex < currentRunSubmissions.length) {
+        currentRunSubmissions[currentRunIndex] = { x: payload.x, y: payload.y, correct: data.correct };
+      }
     }
 
     // Play sound: if last puzzle, play run finished, else correct/incorrect
@@ -1062,6 +1062,12 @@ async function replayPriorSubmission(x, y, correct) {
     
     // Show feedback card
     showResultMessage(data);
+    // Sync all submissions to ensure complete run summary when at end
+    try {
+      if (Array.isArray(data.allSubmissions) && data.allSubmissions.length) {
+        currentRunSubmissions = data.allSubmissions.slice();
+      }
+    } catch(_) {}
     
     // Draw feedback line if incorrect
     if (!data.correct) {

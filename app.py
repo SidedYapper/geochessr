@@ -1,4 +1,5 @@
 import os
+import random
 import threading
 import time
 from datetime import datetime, timedelta
@@ -185,7 +186,11 @@ def create_app() -> Flask:
                     try:
                         from geo_server.manage_runs import create_daily_run
 
-                        create_daily_run(wrapper, grab_new_tournaments=True)
+                        create_daily_run(
+                            wrapper,
+                            grab_new_tournaments=True,
+                            source=random.choice(["lichess", "world_champion"]),
+                        )
                     finally:
                         try:
                             wrapper.conn.close()
@@ -501,6 +506,7 @@ def create_app() -> Flask:
         try:
             runs_state = session.get("runs") or {}
             active_run_id = session.get("active_run_id")
+            submissions = []
             if active_run_id and active_run_id in runs_state:
                 st = runs_state[active_run_id]
                 idx = int(st.get("current_index", 0))
@@ -526,6 +532,8 @@ def create_app() -> Flask:
                 "pgn": (geo.chess_game.pgn if geo and geo.chess_game else None),
                 # In feedback, do not apply masking – send full metadata
                 "gameMeta": _build_game_meta(geo),
+                # Full submissions array for run summary on the client
+                "allSubmissions": submissions,
             }
         )
 
