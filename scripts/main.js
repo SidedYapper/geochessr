@@ -17,6 +17,7 @@ let currentCols = 0;
 let topLeftLight = true; // default
 let overlayFrozen = false;
 let feedbackLineEl = null;
+let feedbackSubfen = '';
 let isTouching = false;
 let lastTouchWithinBoard = false;
 let suppressNextClick = false;
@@ -47,6 +48,47 @@ function playSfx(kind) {
     const p = audio.play();
     if (p && typeof p.catch === 'function') p.catch(() => {});
   } catch (_) {}
+}
+
+// Play a sound and resolve when it finishes (with robust fallbacks)
+function playSfxAndWait(kind) {
+  try {
+    let audio = null;
+    if (kind === 'run_finished') audio = sfxRunFinished;
+    else if (kind === 'correct') audio = sfxCorrect;
+    else if (kind === 'incorrect') audio = sfxIncorrect;
+    if (!audio) return Promise.resolve();
+    audio.currentTime = 0;
+    return new Promise((resolve) => {
+      let finished = false;
+      const cleanup = () => {
+        if (finished) return;
+        finished = true;
+        try { audio.removeEventListener('ended', onEnded); } catch(_) {}
+        try { audio.removeEventListener('error', onError); } catch(_) {}
+        try { clearTimeout(timer); } catch(_) {}
+        resolve();
+      };
+      const onEnded = () => cleanup();
+      const onError = () => cleanup();
+      audio.addEventListener('ended', onEnded, { once: true });
+      audio.addEventListener('error', onError, { once: true });
+      const p = audio.play();
+      if (p && typeof p.catch === 'function') p.catch(() => cleanup());
+      // Fallback: resolve after duration (if known) or 1200ms
+      const fallbackMs = Math.max(1200, Math.floor(((audio.duration || 1.2) * 1000)) + 50);
+      const timer = setTimeout(() => cleanup(), fallbackMs);
+    });
+  } catch (_) {
+    return Promise.resolve();
+  }
+}
+
+// Play first, then when it finishes, play second
+function playSfxThen(firstKind, secondKind) {
+  playSfxAndWait(firstKind)
+    .then(() => new Promise(resolve => setTimeout(resolve, 500)))
+    .then(() => { try { playSfx(secondKind); } catch(_) {} });
 }
 
 function createBoardSquares(rows, cols) {
@@ -558,6 +600,7 @@ function initBoard8() {
       square.dataset.row = String(rowIndex);
       square.dataset.col = String(colIndex);
       square.id = `b8-${rowIndex}-${colIndex}`;
+      square.style.position = 'relative';
       board8El.appendChild(square);
     }
   }
@@ -613,6 +656,95 @@ function showBoard8OverlayAtPosition(topLeftRow, topLeftCol) {
       img.style.objectFit = 'contain';
       img.style.pointerEvents = 'none';
       img.style.filter = 'drop-shadow(0 1px 1px rgba(0,0,0,0.25))';
+      square.appendChild(img);
+    }
+  }
+}
+
+// Render overlay pieces using a provided FEN at a fixed top-left on the 8x8 board.
+// Options: { opacity: number }
+function renderOverlayPiecesAt(topLeftRow, topLeftCol, fenString, opts) {
+  if (!fenString) return;
+  let parsed;
+  try {
+    parsed = parseMockFen(fenString);
+  } catch (e) {
+    return;
+  }
+  const { rows, cols, cells } = parsed;
+  // Only render the visible dimx x dimy window from this FEN
+  // Dimensional window equals current mock FEN board size
+  const opacity = opts && typeof opts.opacity === 'number' ? String(opts.opacity) : '';
+  for (let r = 0; r < rows; r += 1) {
+    for (let c = 0; c < cols; c += 1) {
+      const ch = cells[r * cols + c];
+      if (!ch) continue;
+      const targetRow = topLeftRow + r;
+      const targetCol = topLeftCol + c;
+      if (targetRow < 0 || targetRow > 7 || targetCol < 0 || targetCol > 7) continue;
+      const square = document.getElementById(`b8-${targetRow}-${targetCol}`);
+      if (!square) continue;
+      const img = document.createElement('img');
+      img.className = 'b8-overlay';
+      img.alt = `Overlay ${ch}`;
+      img.src = pieceToAssetPath(ch);
+      // Absolutely position to avoid layout expansion when stacking two overlays
+      const rect = square.getBoundingClientRect();
+      // Use percentages to match existing visual size (~74%) and center
+      img.style.position = 'absolute';
+      img.style.left = '50%';
+      img.style.top = '50%';
+      img.style.transform = 'translate(-50%, -50%)';
+      img.style.width = '74%';
+      img.style.height = '74%';
+      img.style.objectFit = 'contain';
+      img.style.pointerEvents = 'none';
+      img.style.filter = 'drop-shadow(0 1px 1px rgba(0,0,0,0.25))';
+      // Layering: correct pieces base z, ghost above
+      const z = opts && opts.opacity && Number(opts.opacity) < 1 ? 2 : 1;
+      img.style.zIndex = String(z);
+      if (opacity) img.style.opacity = opacity;
+      square.appendChild(img);
+    }
+  }
+}
+
+// Render only the dimx x dimy window from a full 8x8 FEN at the given top-left
+function renderCorrectWindowAt(topLeftRow, topLeftCol, fullFen, windowRows, windowCols) {
+  if (!fullFen) return;
+  let parsed;
+  try {
+    parsed = parseMockFen(fullFen);
+  } catch (e) {
+    return;
+  }
+  const { rows, cols, cells } = parsed;
+  if (rows !== 8 || cols !== 8) return;
+  const wr = Math.max(1, Math.min(8, Number(windowRows) || 8));
+  const wc = Math.max(1, Math.min(8, Number(windowCols) || 8));
+  for (let r = 0; r < wr; r += 1) {
+    for (let c = 0; c < wc; c += 1) {
+      const absRow = topLeftRow + r;
+      const absCol = topLeftCol + c;
+      if (absRow < 0 || absRow > 7 || absCol < 0 || absCol > 7) continue;
+      const ch = cells[absRow * 8 + absCol];
+      if (!ch) continue;
+      const square = document.getElementById(`b8-${absRow}-${absCol}`);
+      if (!square) continue;
+      const img = document.createElement('img');
+      img.className = 'b8-overlay';
+      img.alt = `Overlay ${ch}`;
+      img.src = pieceToAssetPath(ch);
+      img.style.position = 'absolute';
+      img.style.left = '50%';
+      img.style.top = '50%';
+      img.style.transform = 'translate(-50%, -50%)';
+      img.style.width = '74%';
+      img.style.height = '74%';
+      img.style.objectFit = 'contain';
+      img.style.pointerEvents = 'none';
+      img.style.filter = 'drop-shadow(0 1px 1px rgba(0,0,0,0.25))';
+      img.style.zIndex = '1';
       square.appendChild(img);
     }
   }
@@ -743,6 +875,12 @@ async function submitBoard8Selection() {
   const id = geochessId;
   if (!id) return;
   overlayFrozen = true;
+  // Freeze a copy of current placement for ghost rendering later
+  try {
+    if (currentFen && typeof currentFen === 'string') {
+      feedbackSubfen = currentFen.split(' ')[0];
+    }
+  } catch(_) {}
   const payload = { id, x: lastOverlayTopLeft.col, y: lastOverlayTopLeft.row };
   try {
     const res = await fetch('/api/check_position', {
@@ -761,17 +899,47 @@ async function submitBoard8Selection() {
       }
     }
 
-    // Play sound: if last puzzle, play run finished, else correct/incorrect
+    // Play sound: if last puzzle, play correct/incorrect first, then run_finished
     try {
       const isLastPuzzle = (currentRunIndex === currentRunLen - 1);
-      if (isLastPuzzle) playSfx('run_finished');
-      else playSfx(data && data.correct ? 'correct' : 'incorrect');
+      if (isLastPuzzle) {
+        playSfxThen(data && data.correct ? 'correct' : 'incorrect', 'run_finished');
+      } else {
+        playSfx(data && data.correct ? 'correct' : 'incorrect');
+      }
     } catch (_) {}
     
     showResultMessage(data);
     if (!data.correct) {
       drawFeedbackLine(lastOverlayTopLeft, { col: data.answer.x, row: data.answer.y });
     }
+    // After feedback card, render ghost submission pieces and correct window pieces on right board
+    try {
+      // Clear any existing overlays/line before layering anew
+      const imgs = board8El.querySelectorAll('img.b8-overlay');
+      imgs.forEach(img => img.remove());
+      // Submission (ghosted)
+      if (feedbackSubfen) {
+        renderOverlayPiecesAt(lastOverlayTopLeft.row, lastOverlayTopLeft.col, feedbackSubfen, { opacity: 0.5 });
+      }
+      // Correct window: draw only dimx x dimy portion at the correct top-left
+      if (data && typeof data.fullFen === 'string' && data.fullFen.length > 0) {
+        const placement = data.fullFen.split(' ')[0];
+        // infer window rows/cols from submitted subfen
+        try {
+          const { rows: wr, cols: wc } = parseMockFen(feedbackSubfen || '');
+          const ansX = data && data.answer && typeof data.answer.x === 'number' ? data.answer.x : 0;
+          const ansY = data && data.answer && typeof data.answer.y === 'number' ? data.answer.y : 0;
+          renderCorrectWindowAt(ansY, ansX, placement, wr, wc);
+        } catch (_) {
+          // fallback to drawing nothing if parsing fails
+        }
+      }
+      // Re-draw arrow over overlays if incorrect
+      if (!data.correct) {
+        drawFeedbackLine(lastOverlayTopLeft, { col: data.answer.x, row: data.answer.y });
+      }
+    } catch(_) {}
     if (data && typeof data.fullFen === 'string' && data.fullFen.length > 0) {
       const placement = data.fullFen.split(' ')[0];
       currentFen = placement;
@@ -1047,6 +1215,12 @@ async function replayPriorSubmission(x, y, correct) {
 
   // Set frozen state
   overlayFrozen = true;
+  // Preserve the subfen used at the time of submission
+  try {
+    if (currentFen && typeof currentFen === 'string') {
+      feedbackSubfen = currentFen.split(' ')[0];
+    }
+  } catch(_) {}
   
   // Fetch full feedback data from server
   const id = geochessId;
@@ -1069,15 +1243,32 @@ async function replayPriorSubmission(x, y, correct) {
       }
     } catch(_) {}
     
-    // Draw feedback line if incorrect
-    if (!data.correct) {
-      const submitted = { col: x, row: y };
-      const answer = { col: data.answer.x, row: data.answer.y };
-      drawFeedbackLine(submitted, answer);
-    }
-    
-    // Display the pieces on the right board at submitted position
-    showBoard8OverlayAtPosition(y, x);
+    // Render ghost submission pieces and correct window pieces
+    try {
+      // Clear overlays
+      const imgs = board8El.querySelectorAll('img.b8-overlay');
+      imgs.forEach(img => img.remove());
+      // Submission (ghost)
+      if (feedbackSubfen) {
+        renderOverlayPiecesAt(y, x, feedbackSubfen, { opacity: 0.5 });
+      }
+      // Correct window at the correct top-left
+      if (data && typeof data.fullFen === 'string' && data.fullFen.length > 0) {
+        const placement = data.fullFen.split(' ')[0];
+        try {
+          const { rows: wr, cols: wc } = parseMockFen(feedbackSubfen || '');
+          const ansX = data && data.answer && typeof data.answer.x === 'number' ? data.answer.x : 0;
+          const ansY = data && data.answer && typeof data.answer.y === 'number' ? data.answer.y : 0;
+          renderCorrectWindowAt(ansY, ansX, placement, wr, wc);
+        } catch (_) {}
+      }
+      // Arrow on top if incorrect
+      if (!data.correct) {
+        const submitted = { col: x, row: y };
+        const answer = { col: data.answer.x, row: data.answer.y };
+        drawFeedbackLine(submitted, answer);
+      }
+    } catch(_) {}
     
     // Switch left board to full FEN
     if (data && typeof data.fullFen === 'string' && data.fullFen.length > 0) {
