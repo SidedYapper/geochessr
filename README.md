@@ -1,5 +1,7 @@
 # GeoChessr
-This is Geochessr, a website inspired by [GeoGuessr](https://www.geoguessr.com/) and [Wordle](https://www.nytimes.com/games/wordle/index.html), that lets you guess where pieces have been on the chessboard in real chess games from [lichess](https://lichess.org/).
+![](assets/images/geochessr_screenshot.png)
+
+This is GeoChessr, a website inspired by [GeoGuessr](https://www.geoguessr.com/) and [Wordle](https://www.nytimes.com/games/wordle/index.html), that lets you guess where pieces have been on the chessboard in real chess games from [lichess](https://lichess.org/).
 
 The idea for this project came up when hanging out with friends on discord, and so I will attribute the idea for GeoChessr to all of us, [mansimum](https://lichess.org/@/mansimum), [pixler](https://lichess.org/@/pixler), [philantrop](https://lichess.org/@/Philantrop) and finally me, [kappablanc](https://lichess.org/@/kappablanc).
 
