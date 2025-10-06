@@ -10,6 +10,14 @@ class SQLiteWrapper:
     def reset_database(self):
         self.conn.execute("DROP TABLE IF EXISTS geo_chess")
         self.conn.execute("DROP TABLE IF EXISTS chess_games")
+        self.conn.execute("DROP TABLE IF EXISTS runs")
+        self.conn.execute("DROP TABLE IF EXISTS run_puzzles")
+        self.initialize_tables()
+        self.conn.commit()
+
+    def reset_runs(self):
+        self.conn.execute("DROP TABLE IF EXISTS runs")
+        self.conn.execute("DROP TABLE IF EXISTS run_puzzles")
         self.initialize_tables()
         self.conn.commit()
 
@@ -19,10 +27,10 @@ class SQLiteWrapper:
             "CREATE TABLE IF NOT EXISTS geo_chess (id INTEGER PRIMARY KEY AUTOINCREMENT, fen TEXT, subfen TEXT, posx INTEGER, posy INTEGER, dimx INTEGER, dimy INTEGER, move_num INTEGER, last_move TEXT, gameId TEXT, white_to_move INTEGER, score REAL, difficulty REAL, successes INTEGER DEFAULT 0, fails INTEGER DEFAULT 0, timestamp_added REAL)"
         )
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS chess_games (result REAL, url TEXT, whiteElo INTEGER, blackElo INTEGER, timeControl TEXT, gameId TEXT PRIMARY KEY, eco TEXT, whitePlayer TEXT, blackPlayer TEXT, source TEXT, year INTEGER, source_file TEXT)"
+            "CREATE TABLE IF NOT EXISTS chess_games (result REAL, url TEXT, whiteElo INTEGER, blackElo INTEGER, timeControl TEXT, gameId TEXT PRIMARY KEY, eco TEXT, whitePlayer TEXT, blackPlayer TEXT, source TEXT, year INTEGER, pgn TEXT)"
         )
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS runs (identifier TEXT PRIMARY KEY, is_daily INTEGER, black_info_rate REAL)"
+            "CREATE TABLE IF NOT EXISTS runs (identifier TEXT PRIMARY KEY, is_daily INTEGER, black_info_rate REAL, metadata_fields TEXT)"
         )
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS run_puzzles (run_id TEXT, puzzle_id INTEGER, PRIMARY KEY (run_id, puzzle_id))"
@@ -60,7 +68,7 @@ class SQLiteWrapper:
 
     def insert_chess_game(self, chess_game: ChessGame):
         self.conn.execute(
-            "INSERT INTO chess_games (result, url, whiteElo, blackElo, timeControl, gameId, eco, whitePlayer, blackPlayer, source, year, source_file) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO chess_games (result, url, whiteElo, blackElo, timeControl, gameId, eco, whitePlayer, blackPlayer, source, year, pgn) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 chess_game.result,
                 chess_game.url,
@@ -73,7 +81,7 @@ class SQLiteWrapper:
                 chess_game.blackPlayer,
                 chess_game.source,
                 chess_game.year,
-                chess_game.source_file,
+                chess_game.pgn,
             ),
         )
         self.conn.commit()
@@ -97,7 +105,7 @@ class SQLiteWrapper:
             blackPlayer=result[8],
             source=result[9],
             year=result[10],
-            source_file=result[11],
+            pgn=result[11],
         )
 
     def get_geo_chess(self, id: int):
@@ -179,6 +187,7 @@ class SQLiteWrapper:
         percentile_bounds = None
         if has_min_pct or has_max_pct:
             # First query: collect difficulties matching other constraints
+            # Join to chess_games to allow source filtering later; but for difficulty sampling we don't need join
             diff_query = (
                 f"SELECT difficulty FROM geo_chess{base_where_sql} AND difficulty IS NOT NULL"
                 if base_where_sql
@@ -235,6 +244,13 @@ class SQLiteWrapper:
             final_where_clauses.append("difficulty <= ?")
             final_params.append(percentile_bounds[1])
 
+        # Optional source filter joins geo_chess to chess_games on gameId
+        join_sql = ""
+        if getattr(run_settings, "source", None):
+            join_sql = " JOIN chess_games cg ON cg.gameId = geo_chess.gameId"
+            final_where_clauses.append("cg.source = ?")
+            final_params.append(run_settings.source)
+
         final_where_sql = (
             (" WHERE " + " AND ".join(final_where_clauses))
             if final_where_clauses
@@ -245,8 +261,8 @@ class SQLiteWrapper:
             (run_settings.n_puzzles if run_settings.n_puzzles is not None else 5) or 5
         )
         select_sql = (
-            "SELECT id, fen, subfen, posx, posy, dimx, dimy, move_num, last_move, gameId, white_to_move, score, difficulty, successes, fails, timestamp_added "
-            f"FROM geo_chess{final_where_sql} ORDER BY RANDOM() LIMIT {limit}"
+            "SELECT geo_chess.id, geo_chess.fen, geo_chess.subfen, geo_chess.posx, geo_chess.posy, geo_chess.dimx, geo_chess.dimy, geo_chess.move_num, geo_chess.last_move, geo_chess.gameId, geo_chess.white_to_move, geo_chess.score, geo_chess.difficulty, geo_chess.successes, geo_chess.fails, geo_chess.timestamp_added "
+            f"FROM geo_chess{join_sql}{final_where_sql} ORDER BY RANDOM() LIMIT {limit}"
         )
         cursor = self.conn.execute(select_sql, tuple(final_params))
         rows = cursor.fetchall()
@@ -306,8 +322,13 @@ class SQLiteWrapper:
 
     def insert_run(self, run: Run):
         self.conn.execute(
-            "INSERT INTO runs (identifier, is_daily, black_info_rate) VALUES (?, ?, ?)",
-            (run.identifier, run.is_daily, run.black_info_rate),
+            "INSERT INTO runs (identifier, is_daily, black_info_rate, metadata_fields) VALUES (?, ?, ?, ?)",
+            (
+                run.identifier,
+                run.is_daily,
+                run.black_info_rate,
+                ",".join(run.metadata_fields),
+            ),
         )
         for puzzle_id in run.puzzle_ids:
             self.conn.execute(
@@ -318,7 +339,7 @@ class SQLiteWrapper:
 
     def get_run(self, identifier: str) -> Run:
         cursor = self.conn.execute(
-            "SELECT identifier, is_daily, black_info_rate FROM runs WHERE identifier = ?",
+            "SELECT identifier, is_daily, black_info_rate, metadata_fields FROM runs WHERE identifier = ?",
             (identifier,),
         )
         result = cursor.fetchone()
@@ -335,11 +356,12 @@ class SQLiteWrapper:
             is_daily=result[1],
             black_info_rate=result[2],
             puzzle_ids=puzzle_ids,
+            metadata_fields=result[3].split(","),
         )
 
     def get_daily_run(self) -> Run:
         cursor = self.conn.execute(
-            "SELECT identifier, is_daily, black_info_rate FROM runs WHERE is_daily = 1",
+            "SELECT identifier, is_daily, black_info_rate, metadata_fields FROM runs WHERE is_daily = 1",
         )
         result = cursor.fetchone()
         if result is None:
@@ -354,6 +376,7 @@ class SQLiteWrapper:
             is_daily=result[1],
             black_info_rate=result[2],
             puzzle_ids=puzzle_ids,
+            metadata_fields=result[3].split(","),
         )
 
     def remove_daily_run(self):

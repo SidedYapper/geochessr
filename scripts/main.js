@@ -5,6 +5,8 @@ const PIECE_LETTERS = new Set(['p','r','n','b','q','k','P','R','N','B','Q','K'])
 
 const boardEl = document.getElementById('board');
 const boardShellEl = document.querySelector('.board-shell');
+const lichessShellEl = document.getElementById('lichessShell');
+const lichessIframeEl = document.getElementById('lichessIframe');
 const errorEl = document.getElementById('error');
 const board8El = document.getElementById('board8');
 let lastOverlayTopLeft = null; // {row, col} in 0-based 8x8 coords
@@ -22,6 +24,8 @@ let currentRunId = null;
 let currentRunIndex = 0;
 let currentRunLen = 0;
 let currentRunSubmissions = []; // Track all submissions for the current run
+let currentPgnObjectUrl = null; // Blob URL for PGN download (feedback phase)
+let useLichessEmbed = false; // user toggle for lichess board in feedback
 
 // Sound effects
 let sfxCorrect = null;
@@ -271,10 +275,52 @@ document.addEventListener('DOMContentLoaded', function() {
     }
   } catch (_) {}
 
+  // Metadata rows/values lookup
+  const metaRows = {
+    result: document.getElementById('metaRowResult'),
+    whiteElo: document.getElementById('metaRowWhiteElo'),
+    blackElo: document.getElementById('metaRowBlackElo'),
+    move_num: document.getElementById('metaRowMoveNum'),
+    opening_name: document.getElementById('metaRowOpening'),
+    whitePlayer: document.getElementById('metaRowWhitePlayer'),
+    blackPlayer: document.getElementById('metaRowBlackPlayer'),
+    year: document.getElementById('metaRowYear'),
+    url: document.getElementById('metaRowUrl'),
+    pgn: document.getElementById('metaRowPgn'),
+  };
+  const metaVals = {
+    result: document.getElementById('metaResult'),
+    whiteElo: document.getElementById('metaWhiteElo'),
+    blackElo: document.getElementById('metaBlackElo'),
+    move_num: document.getElementById('metaMove'),
+    opening_name: document.getElementById('metaOpening'),
+    whitePlayer: document.getElementById('metaWhitePlayer'),
+    blackPlayer: document.getElementById('metaBlackPlayer'),
+    year: document.getElementById('metaYear'),
+    url: document.getElementById('metaGameLink'),
+    pgn: document.getElementById('metaPgnLink'),
+  };
+
+  // Initialize metadata rows visibility based on run metadata fields
+  try {
+    const fields = Array.isArray(window.METADATA_FIELDS) ? window.METADATA_FIELDS : [];
+    const allowed = new Set(fields);
+    Object.entries(metaRows).forEach(([key, row]) => {
+      if (!row) return;
+      // URL and PGN hidden until feedback
+      if (key === 'url' || key === 'pgn') {
+        row.style.display = 'none';
+        return;
+      }
+      row.style.display = allowed.has(key) ? '' : 'none';
+    });
+  } catch (_) {}
+
   // Bottom menu bindings
   const btnNewRun = document.getElementById('btnNewRun');
   const btnGithub = document.getElementById('btnGithub');
   const btnAbout = document.getElementById('btnAbout');
+  const btnLichess = document.getElementById('btnLichessBoard');
   const modal = document.getElementById('runModal');
   const modalClose = document.getElementById('runModalClose');
   const rsDifficulty = document.getElementById('rsDifficulty');
@@ -286,9 +332,59 @@ document.addEventListener('DOMContentLoaded', function() {
   const rsMinMoveVal = document.getElementById('rsMinMoveVal');
   const rsMaxMoveVal = document.getElementById('rsMaxMoveVal');
   const runCreateBtn = document.getElementById('runCreateBtn');
+  const rsSourceLichess = document.getElementById('rsSourceLichess');
+  const rsSourceMasters = document.getElementById('rsSourceMasters');
+
+  // Helpers to persist run settings in cookie
+  function readRunSettingsFromUI() {
+    let source = 'lichess';
+    try {
+      if (rsSourceMasters && rsSourceMasters.checked) source = 'world_champion';
+      else if (rsSourceLichess && rsSourceLichess.checked) source = 'lichess';
+    } catch (_) {}
+    return {
+      difficulty: Number(rsDifficulty && rsDifficulty.value || 1),
+      n_puzzles: Number(rsNPuzzles && rsNPuzzles.value || 10),
+      min_move: Number(rsMinMove && rsMinMove.value || 5),
+      max_move: Number(rsMaxMove && rsMaxMove.value || 20),
+      source,
+    };
+  }
+  function applyRunSettingsToUI(s) {
+    if (!s || typeof s !== 'object') return;
+    try {
+      if (typeof s.difficulty === 'number' && rsDifficulty) rsDifficulty.value = String(Math.max(0, Math.min(3, s.difficulty)));
+      if (typeof s.n_puzzles === 'number' && rsNPuzzles) rsNPuzzles.value = String(Math.max(1, Math.min(50, s.n_puzzles)));
+      if (typeof s.min_move === 'number' && rsMinMove) rsMinMove.value = String(Math.max(0, Math.min(100, s.min_move)));
+      if (typeof s.max_move === 'number' && rsMaxMove) rsMaxMove.value = String(Math.max(0, Math.min(100, s.max_move)));
+      if (typeof s.source === 'string') {
+        if (s.source === 'world_champion' && rsSourceMasters) rsSourceMasters.checked = true;
+        else if (rsSourceLichess) rsSourceLichess.checked = true;
+      }
+      // Update labels and enforce ordering
+      if (typeof updateDiffLabel === 'function') updateDiffLabel();
+      if (typeof clampMinMax === 'function') clampMinMax.call(rsMaxMove);
+      if (rsNPuzzles && rsNPuzzlesVal) rsNPuzzlesVal.textContent = String(rsNPuzzles.value);
+    } catch (_) {}
+  }
+  function saveRunSettingsCookie() {
+    try {
+      const s = readRunSettingsFromUI();
+      const val = encodeURIComponent(JSON.stringify(s));
+      setCookie('runSettings', val, 180);
+    } catch (_) {}
+  }
+  function loadRunSettingsCookie() {
+    try {
+      const raw = getCookie('runSettings');
+      if (!raw) return;
+      const s = JSON.parse(decodeURIComponent(raw));
+      applyRunSettingsToUI(s);
+    } catch (_) {}
+  }
 
   if (btnNewRun && modal) {
-    btnNewRun.addEventListener('click', () => { modal.style.display = 'grid'; });
+    btnNewRun.addEventListener('click', () => { loadRunSettingsCookie(); modal.style.display = 'grid'; });
   }
   if (modalClose && modal) {
     modalClose.addEventListener('click', () => { modal.style.display = 'none'; });
@@ -299,6 +395,85 @@ document.addEventListener('DOMContentLoaded', function() {
   if (btnAbout) {
     btnAbout.addEventListener('click', () => {
       window.location.href = '/about';
+    });
+  }
+
+  // Simple cookie helpers
+  function setCookie(name, value, days) {
+    try {
+      const d = new Date();
+      d.setTime(d.getTime() + (days * 24 * 60 * 60 * 1000));
+      document.cookie = `${name}=${value}; expires=${d.toUTCString()}; path=/; SameSite=Lax`;
+    } catch (_) {}
+  }
+  function getCookie(name) {
+    try {
+      const parts = document.cookie.split('; ').filter(Boolean);
+      for (const part of parts) {
+        const [k, v] = part.split('=');
+        if (k === name) return v || null;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  // Initialize lichess toggle from cookie or default to active on landscape
+  try {
+    const saved = getCookie('lichessEmbed');
+    let initial = null;
+    if (saved === '1') initial = true;
+    else if (saved === '0') initial = false;
+    else initial = (window.innerWidth >= window.innerHeight); // active by default on landscape
+    useLichessEmbed = !!initial;
+    if (btnLichess) btnLichess.setAttribute('aria-pressed', useLichessEmbed ? 'true' : 'false');
+    // If we are already in feedback and a lichess URL is present, apply immediately
+    try {
+      const card = document.getElementById('feedbackCard');
+      if (card && card.style.display !== 'none') {
+        const link = document.getElementById('metaGameLink');
+        const href = link && link.href ? link.href : '';
+        if (useLichessEmbed && href && href.includes('lichess.org/')) {
+          let gameId = '';
+          let half = '';
+          try {
+            const m = href.match(/lichess\.org\/(\w+)\/\#(\d+)/);
+            if (m) { gameId = m[1]; half = m[2]; }
+          } catch(_) {}
+          toggleLichessEmbed(gameId, half);
+        } else {
+          toggleLichessEmbed('', '');
+        }
+      }
+    } catch(_) {}
+  } catch(_) {}
+  if (btnLichess) {
+    btnLichess.addEventListener('click', () => {
+      useLichessEmbed = !useLichessEmbed;
+      btnLichess.setAttribute('aria-pressed', useLichessEmbed ? 'true' : 'false');
+      // persist selection in cookie for 180 days
+      try { setCookie('lichessEmbed', useLichessEmbed ? '1' : '0', 180); } catch(_) {}
+      // If we are already in feedback phase with a game link, update view
+      try {
+        const card = document.getElementById('feedbackCard');
+        if (card && card.style.display !== 'none') {
+          // Re-evaluate left panel display based on current data in meta link
+          const link = document.getElementById('metaGameLink');
+          const href = link && link.href ? link.href : '';
+          // Only switch if we have a lichess URL
+          if (href && href.includes('lichess.org/')) {
+            // Parse game id and half move from existing href if possible
+            let gameId = '';
+            let half = '';
+            try {
+              const m = href.match(/lichess\.org\/(\w+)\/\#(\d+)/);
+              if (m) { gameId = m[1]; half = m[2]; }
+            } catch(_) {}
+            toggleLichessEmbed(gameId, half);
+          } else {
+            toggleLichessEmbed('', '');
+          }
+        }
+      } catch(_) {}
     });
   }
 
@@ -313,7 +488,7 @@ document.addEventListener('DOMContentLoaded', function() {
     rsDifficultyLabel.textContent = `${b.name} (${b.range})`;
   }
   if (rsDifficulty && rsDifficultyLabel) {
-    rsDifficulty.addEventListener('input', updateDiffLabel);
+    rsDifficulty.addEventListener('input', () => { updateDiffLabel(); saveRunSettingsCookie(); });
     updateDiffLabel();
   }
   function clampMinMax() {
@@ -329,24 +504,35 @@ document.addEventListener('DOMContentLoaded', function() {
     rsMaxMoveVal.textContent = String(maxv);
   }
   if (rsMinMove && rsMaxMove) {
-    rsMinMove.addEventListener('input', clampMinMax);
-    rsMaxMove.addEventListener('input', clampMinMax);
+    rsMinMove.addEventListener('input', () => { clampMinMax(); saveRunSettingsCookie(); });
+    rsMaxMove.addEventListener('input', () => { clampMinMax(); saveRunSettingsCookie(); });
     clampMinMax();
   }
   if (rsNPuzzles && rsNPuzzlesVal) {
-    rsNPuzzles.addEventListener('input', () => { rsNPuzzlesVal.textContent = String(rsNPuzzles.value); });
+    rsNPuzzles.addEventListener('input', () => { rsNPuzzlesVal.textContent = String(rsNPuzzles.value); saveRunSettingsCookie(); });
     rsNPuzzlesVal.textContent = String(rsNPuzzles.value);
   }
+  // Persist source radio changes
+  if (rsSourceLichess) rsSourceLichess.addEventListener('change', saveRunSettingsCookie);
+  if (rsSourceMasters) rsSourceMasters.addEventListener('change', saveRunSettingsCookie);
 
   if (runCreateBtn) {
     runCreateBtn.addEventListener('click', async () => {
       const diff = Number(rsDifficulty.value || 1);
+      let source = 'lichess';
+      try {
+        if (rsSourceMasters && rsSourceMasters.checked) source = 'world_champion';
+        else if (rsSourceLichess && rsSourceLichess.checked) source = 'lichess';
+      } catch (_) { /* default to lichess */ }
       const payload = {
         difficulty: diff,
         n_puzzles: Number(rsNPuzzles.value || 8),
         min_move: Number(rsMinMove.value || 5),
         max_move: Number(rsMaxMove.value || 20),
+        source,
       };
+      // Persist settings on create
+      saveRunSettingsCookie();
       try {
         const res = await fetch('/api/create_run', {
           method: 'POST',
@@ -601,7 +787,37 @@ async function submitBoard8Selection() {
         link.textContent = data.gameId;
         link.href = `https://lichess.org/${data.gameId}/#${data.halfMoveNum}`;
       }
+      // Switch to lichess embed if toggled on and URL available
+      if (useLichessEmbed) {
+        toggleLichessEmbed(data.gameId, String(data.halfMoveNum));
+      } else {
+        toggleLichessEmbed('', '');
+      }
     }
+  // After submission, reveal URL/PGN rows according to metadata fields
+  try {
+    const fields = Array.isArray(window.METADATA_FIELDS) ? window.METADATA_FIELDS : [];
+    const allowed = new Set(fields);
+    const metaRowUrl = document.getElementById('metaRowUrl');
+    const metaRowPgn = document.getElementById('metaRowPgn');
+    const pgnLink = document.getElementById('metaPgnLink');
+    if (metaRowUrl) metaRowUrl.style.display = allowed.has('url') ? '' : 'none';
+    if (metaRowPgn) {
+      if (allowed.has('pgn') && data && typeof data.pgn === 'string' && data.pgn.length > 0) {
+        try { if (currentPgnObjectUrl) URL.revokeObjectURL(currentPgnObjectUrl); } catch(_) {}
+        const blob = new Blob([data.pgn], { type: 'application/x-chess-pgn' });
+        currentPgnObjectUrl = URL.createObjectURL(blob);
+        if (pgnLink) {
+          pgnLink.textContent = 'Download';
+          pgnLink.href = currentPgnObjectUrl;
+          pgnLink.download = 'game.pgn';
+        }
+        metaRowPgn.style.display = '';
+      } else {
+        metaRowPgn.style.display = 'none';
+      }
+    }
+  } catch(_) {}
   } catch (e) {
     console.error(e);
     showResultMessage({ ok: false, error: 'Network error' });
@@ -630,6 +846,43 @@ function showResultMessage(resp) {
   const title = document.getElementById('feedbackTitle');
   const nextBtn = document.getElementById('nextButton');
   const runSummary = document.getElementById('runSummary');
+  const metaRowUrl = document.getElementById('metaRowUrl');
+  const metaRowPgn = document.getElementById('metaRowPgn');
+  const pgnLink = document.getElementById('metaPgnLink');
+  // Unmask metadata in feedback: populate all allowed fields with full values
+  try {
+    const fields = Array.isArray(window.METADATA_FIELDS) ? window.METADATA_FIELDS : [];
+    const allowed = new Set(fields);
+    const gm = resp && resp.gameMeta ? resp.gameMeta : null;
+    if (gm) {
+      const setIf = (key, id, val) => {
+        if (!allowed.has(key)) return;
+        const el = document.getElementById(id);
+        if (el) el.textContent = val != null ? String(val) : '';
+        // Also ensure the row is visible in feedback
+        const rowIdByKey = {
+          result: 'metaRowResult',
+          whiteElo: 'metaRowWhiteElo',
+          blackElo: 'metaRowBlackElo',
+          move_num: 'metaRowMoveNum',
+          opening_name: 'metaRowOpening',
+          whitePlayer: 'metaRowWhitePlayer',
+          blackPlayer: 'metaRowBlackPlayer',
+          year: 'metaRowYear',
+        };
+        const rowEl = document.getElementById(rowIdByKey[key] || '');
+        if (rowEl) rowEl.style.display = '';
+      };
+      setIf('result', 'metaResult', gm.result);
+      setIf('whiteElo', 'metaWhiteElo', gm.whiteElo);
+      setIf('blackElo', 'metaBlackElo', gm.blackElo);
+      setIf('move_num', 'metaMove', gm.moveNum);
+      setIf('opening_name', 'metaOpening', gm.opening_name);
+      setIf('whitePlayer', 'metaWhitePlayer', gm.whitePlayer);
+      setIf('blackPlayer', 'metaBlackPlayer', gm.blackPlayer);
+      setIf('year', 'metaYear', gm.year);
+    }
+  } catch(_) {}
   
   if (card && title && nextBtn) {
     card.style.display = 'grid';
@@ -666,6 +919,37 @@ function showResultMessage(resp) {
       }
     }
   }
+
+  // Reveal URL row in feedback if it is part of run metadata fields
+  try {
+    const fields = Array.isArray(window.METADATA_FIELDS) ? window.METADATA_FIELDS : [];
+    const allowed = new Set(fields);
+    if (metaRowUrl) metaRowUrl.style.display = allowed.has('url') ? '' : 'none';
+    // PGN: construct a downloadable link if provided
+    if (metaRowPgn) {
+      if (allowed.has('pgn') && resp && typeof resp.pgn === 'string' && resp.pgn.length > 0) {
+        // Revoke previous object URL to avoid leaks
+        try { if (currentPgnObjectUrl) URL.revokeObjectURL(currentPgnObjectUrl); } catch(_) {}
+        const blob = new Blob([resp.pgn], { type: 'application/x-chess-pgn' });
+        currentPgnObjectUrl = URL.createObjectURL(blob);
+        if (pgnLink) {
+          pgnLink.textContent = 'Download';
+          pgnLink.href = currentPgnObjectUrl;
+          pgnLink.download = 'game.pgn';
+        }
+        metaRowPgn.style.display = '';
+      } else {
+        metaRowPgn.style.display = 'none';
+      }
+    }
+  } catch(_) {}
+
+  // If toggle is on and URL present in resp, update embed now
+  try {
+    if (useLichessEmbed && resp && resp.gameId && typeof resp.halfMoveNum === 'number') {
+      toggleLichessEmbed(resp.gameId, String(resp.halfMoveNum));
+    }
+  } catch(_) {}
 }
 
 function showRunSummary() {
@@ -807,6 +1091,11 @@ async function replayPriorSubmission(x, y, correct) {
         link.textContent = data.gameId;
         link.href = `https://lichess.org/${data.gameId}/#${data.halfMoveNum}`;
       }
+      if (useLichessEmbed) {
+        toggleLichessEmbed(data.gameId, String(data.halfMoveNum));
+      } else {
+        toggleLichessEmbed('', '');
+      }
     }
   } catch (e) {
     console.error(e);
@@ -852,17 +1141,28 @@ async function handleNextClick() {
     // Update puzzle number
     setText('metaPuzzleNum', `${currentRunIndex + 1}/${currentRunLen}`);
     if (data.game_meta) {
-      setText('metaResult', data.game_meta.result || '');
-      setText('metaWhiteElo', data.game_meta.whiteElo || '');
-      setText('metaOpening', data.game_meta.opening_name || '');
-      setText('metaBlackElo', data.game_meta.blackElo || '');
-      setText('metaMove', data.game_meta.moveNum || '');
+    setText('metaResult', data.game_meta.result || '');
+    setText('metaWhiteElo', data.game_meta.whiteElo || '');
+    setText('metaOpening', data.game_meta.opening_name || '');
+    setText('metaBlackElo', data.game_meta.blackElo || '');
+    setText('metaMove', data.game_meta.moveNum || '');
+    setText('metaWhitePlayer', data.game_meta.whitePlayer || '');
+    setText('metaBlackPlayer', data.game_meta.blackPlayer || '');
+    setText('metaYear', data.game_meta.year || '');
     } else {
-      setText('metaResult', ''); setText('metaWhiteElo', ''); setText('metaBlackElo', ''); setText('metaMove', '');
+    setText('metaResult', ''); setText('metaWhiteElo', ''); setText('metaBlackElo', ''); setText('metaMove', ''); setText('metaWhitePlayer',''); setText('metaBlackPlayer',''); setText('metaYear','');
     }
     // Reset URL link
     const link = document.getElementById('metaGameLink');
     if (link) { link.textContent = ''; link.removeAttribute('href'); }
+  // Hide URL/PGN rows until next submission feedback
+  try {
+    const metaRowUrl = document.getElementById('metaRowUrl');
+    const metaRowPgn = document.getElementById('metaRowPgn');
+    if (metaRowUrl) metaRowUrl.style.display = 'none';
+    if (metaRowPgn) metaRowPgn.style.display = 'none';
+    if (currentPgnObjectUrl) { try { URL.revokeObjectURL(currentPgnObjectUrl); } catch(_) {} currentPgnObjectUrl = null; }
+  } catch(_) {}
 
     // Hide feedback card and run summary
     const card = document.getElementById('feedbackCard');
@@ -882,6 +1182,8 @@ async function handleNextClick() {
         nextBtn.style.display = 'block';
       }
     }
+    // Ensure left board is visible again, hide lichess embed for new puzzle
+    toggleLichessEmbed('', '');
     // Re-apply layout sizing after new position
     applyLayoutSizing();
     // Hide initial labels permanently after first submission
@@ -932,6 +1234,30 @@ function highlightAbsoluteLastMove(absCells) {
     if (!sq) continue;
     sq.classList.add('highlight');
   }
+}
+
+function toggleLichessEmbed(gameId, halfMoveNumStr) {
+  // Only allow embed if run metadata includes 'url'
+  const fields = Array.isArray(window.METADATA_FIELDS) ? window.METADATA_FIELDS : [];
+  const hasUrlField = fields.includes('url');
+  // Show iframe instead of left board in feedback if enabled and a URL exists
+  const hasUrl = hasUrlField && !!gameId && !!halfMoveNumStr;
+  if (!useLichessEmbed || !hasUrl) {
+    // Hide iframe, show board
+    if (lichessShellEl) lichessShellEl.style.display = 'none';
+    if (boardShellEl) boardShellEl.style.display = '';
+    // Clear iframe src to avoid playing anything in background
+    if (lichessIframeEl) lichessIframeEl.src = '';
+    return;
+  }
+  // Build embed URL
+  const src = `https://lichess.org/embed/game/${encodeURIComponent(gameId)}#${encodeURIComponent(halfMoveNumStr)}?theme=auto&bg=auto`;
+  if (lichessIframeEl) lichessIframeEl.src = src;
+  // Show iframe shell, hide board shell
+  if (lichessShellEl) lichessShellEl.style.display = '';
+  if (boardShellEl) boardShellEl.style.display = 'none';
+  // Keep sizes consistent
+  enforceLeftBoardMaxHeight();
 }
 
 function drawFeedbackLine(submittedTopLeft, correctTopLeft) {
@@ -1020,11 +1346,12 @@ function enforceLeftBoardMaxHeight() {
   // Height_left = width_left * rows/cols (since aspect-ratio is cols/rows)
   // We need width_left <= rightHeight * (cols/rows)
   const maxAllowedWidth = rightHeight * (currentCols / currentRows);
-  // Apply only when rows > 3; otherwise clear the override
-  if (currentRows > 3) {
-    boardEl.style.maxWidth = `${Math.floor(maxAllowedWidth)}px`;
-  } else {
-    boardEl.style.maxWidth = '';
+  // Always cap the board width so its height never exceeds the right board height,
+  // regardless of the mock FEN dimensions (works for tall/wide boards like 2x3, 3x2, etc.).
+  boardEl.style.maxWidth = `${Math.floor(maxAllowedWidth)}px`;
+  // Keep lichess shell matched as well (when visible)
+  if (lichessShellEl) {
+    lichessShellEl.style.maxWidth = `${Math.floor(maxAllowedWidth)}px`;
   }
   // After potentially changing board size, reposition title
   positionTitle();
@@ -1057,8 +1384,10 @@ function applyLayoutSizing() {
   }
   const leftW = boardEl ? boardEl.getBoundingClientRect().width : 0;
   const shellW = boardShellEl ? boardShellEl.getBoundingClientRect().width : leftW;
+  const lichessShellW = lichessShellEl && lichessShellEl.style.display !== 'none' ? lichessShellEl.getBoundingClientRect().width : 0;
   const rightW = board8El ? board8El.getBoundingClientRect().width : 0;
-  const boardW = Math.max(0, Math.min(shellW || rightW, rightW || shellW));
+  const effectiveLeft = Math.max(shellW, lichessShellW);
+  const boardW = Math.max(0, Math.min(effectiveLeft || rightW, rightW || effectiveLeft));
   if (!boardW) return;
   const RATIO = 0.75; // meta width relative to a board width
   let metaW = Math.round(boardW * RATIO);

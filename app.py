@@ -16,6 +16,7 @@ from flask import (
 from geo_server.buiid_eco_json import get_eco_openings
 from geo_server.sqlite_wrapper import SQLiteWrapper
 from geo_server.manage_runs import create_run_and_add_to_database, RunSettings
+from geo_server.constants import metadata_fields as SOURCE_METADATA_FIELDS
 
 
 def create_app() -> Flask:
@@ -230,6 +231,9 @@ def create_app() -> Flask:
                     if getattr(geo, "move_num", None) is not None
                     else None
                 ),
+                "whitePlayer": (cg.whitePlayer if cg else None),
+                "blackPlayer": (cg.blackPlayer if cg else None),
+                "year": (cg.year if cg else None),
             }
         except Exception:
             return None
@@ -271,6 +275,9 @@ def create_app() -> Flask:
         masked_meta["blackElo"] = masked("blackElo", game_meta.get("blackElo"))
         masked_meta["timeControl"] = masked("timeControl", game_meta.get("timeControl"))
         masked_meta["moveNum"] = masked("moveNum", game_meta.get("moveNum"))
+        masked_meta["whitePlayer"] = masked("whitePlayer", game_meta.get("whitePlayer"))
+        masked_meta["blackPlayer"] = masked("blackPlayer", game_meta.get("blackPlayer"))
+        masked_meta["year"] = masked("year", game_meta.get("year"))
         masked_meta["opening_name"] = masked(
             "opening_name", game_meta.get("opening_name")
         )
@@ -388,6 +395,7 @@ def create_app() -> Flask:
             is_daily=run.is_daily,
             prior_submission=prior_sub,
             all_submissions=all_subs,
+            metadata_fields=run.metadata_fields,
         )
 
     @app.route("/styles/<path:filename>")
@@ -497,6 +505,9 @@ def create_app() -> Flask:
                 "halfMoveNum": half_move_num,
                 "gameUrl": game_url,
                 "lastMoveCells": last_move_cells,
+                "pgn": (geo.chess_game.pgn if geo and geo.chess_game else None),
+                # In feedback, do not apply masking – send full metadata
+                "gameMeta": _build_game_meta(geo),
             }
         )
 
@@ -592,6 +603,15 @@ def create_app() -> Flask:
         n_puzzles = int(data.get("n_puzzles", 10))
         min_move = int(data.get("min_move", 5))
         max_move = int(data.get("max_move", 20))
+        source = (data.get("source") or "lichess").strip()
+        if source not in ("lichess", "world_champion"):
+            source = "lichess"
+
+        # Derive metadata_fields from selected source
+        try:
+            source_fields = SOURCE_METADATA_FIELDS.get(source, [])
+        except Exception:
+            source_fields = []
 
         settings = RunSettings(
             min_difficulty_percentage=min_dp,
@@ -604,6 +624,8 @@ def create_app() -> Flask:
             min_move_num=min_move,
             max_move_num=max_move,
             black_info_rate=bir,
+            source=source,
+            metadata_fields=source_fields,
         )
 
         db_path = os.path.join(base_dir, "database", "geo_chess.db")

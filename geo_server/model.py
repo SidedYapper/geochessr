@@ -14,7 +14,7 @@ class ChessGame(BaseModel):
     whitePlayer: Optional[str] = None
     blackPlayer: Optional[str] = None
     source: Optional[str] = None
-    source_file: Optional[str] = None
+    pgn: Optional[str] = None
 
 
 class GeoChess(BaseModel):
@@ -41,25 +41,17 @@ class Run(BaseModel):
     puzzle_ids: list[int]
     is_daily: bool
     black_info_rate: float
+    metadata_fields: list[str]
 
 
 class RunSettings(BaseModel):
+    metadata_fields: Optional[list[str]] = None
     min_difficulty: Optional[float] = None
     max_difficulty: Optional[float] = None
     min_difficulty_percentage: Optional[float] = None
     max_difficulty_percentage: Optional[float] = None
     min_score: float = 5.0
     n_puzzles: int = 5
-    metadata_fields: list[str] = Field(
-        default_factory=lambda: [
-            "result",
-            "whiteElo",
-            "blackElo",
-            "moveNum",
-            "opening_name",
-            "url",
-        ]
-    )
     max_played: Optional[int] = None
     early_timestamp: Optional[int] = None
     late_timestamp: Optional[int] = None

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from geo_server.get_new_positions import add_geochess_to_database
 import string
 import secrets
+from geo_server.constants import metadata_fields as SOURCE_METADATA_FIELDS
 
 daily_run_settings = RunSettings(
     min_difficulty=None,
@@ -17,15 +18,21 @@ daily_run_settings = RunSettings(
     max_move_num=20,
     min_move_num=4,
     black_info_rate=0.2,
+    source="lichess",
 )
 
 
 def create_daily_run(
-    sqlite_wrapper: SQLiteWrapper, grab_new_tournaments: bool = True
+    sqlite_wrapper: SQLiteWrapper,
+    grab_new_tournaments: bool = True,
+    source: str = "lichess",
 ) -> Run:
-    daily_run_settings.early_timestamp = int(
-        (datetime.now() - timedelta(days=1)).timestamp()
-    )
+    if source == "lichess":
+        daily_run_settings.early_timestamp = int(
+            (datetime.now() - timedelta(days=1)).timestamp()
+        )
+    daily_run_settings.source = source
+    daily_run_settings.metadata_fields = SOURCE_METADATA_FIELDS[source]
     if grab_new_tournaments:
         add_geochess_to_database(sqlite_wrapper, n_tournaments=3)
     sqlite_wrapper.remove_daily_run()
@@ -45,6 +52,7 @@ def create_run_and_add_to_database(
                 puzzle_ids=[geochess.id for geochess in geochess_list],
                 is_daily=is_daily,
                 black_info_rate=run_settings.black_info_rate,
+                metadata_fields=run_settings.metadata_fields,
             )
             sqlite_wrapper.insert_run(run)
         except IntegrityError as e:
@@ -58,4 +66,6 @@ def create_run_and_add_to_database(
 
 if __name__ == "__main__":
     sqlite_wrapper = SQLiteWrapper("database/geo_chess.db")
-    create_daily_run(sqlite_wrapper, grab_new_tournaments=False)
+    create_daily_run(
+        sqlite_wrapper, grab_new_tournaments=False, source="world_champion"
+    )

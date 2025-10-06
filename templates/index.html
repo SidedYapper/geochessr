@@ -15,6 +15,10 @@
         <div class="board-shell">
           <div id="board" class="board" aria-label="mock chessboard"></div>
         </div>
+        <!-- Lichess embed shell (shown in feedback when toggled on) -->
+        <div id="lichessShell" class="board-shell" style="display:none;">
+          <iframe id="lichessIframe" class="lichess-iframe" allowtransparency="true" frameborder="0"></iframe>
+        </div>
       </div>
       <div class="board-wrapper">
         <div id="labelRight" class="board-label">On the chessboard</div>
@@ -23,12 +27,16 @@
       <aside class="meta" aria-label="Game meta">
         <div class="meta-card">
           <div class="meta-row"><span class="meta-label">Puzzle #</span><span id="metaPuzzleNum" class="meta-value">{{ (run_index + 1) if run_index is not none else '' }}/{{ run_len if run_len else '' }}</span></div>
-          <div class="meta-row"><span class="meta-label">Result</span><span id="metaResult" class="meta-value">{{ (game_meta.result or '') if game_meta else '' }}</span></div>
-          <div class="meta-row"><span class="meta-label">White ELO</span><span id="metaWhiteElo" class="meta-value">{{ (game_meta.whiteElo or '') if game_meta else '' }}</span></div>
-          <div class="meta-row"><span class="meta-label">Black ELO</span><span id="metaBlackElo" class="meta-value">{{ (game_meta.blackElo or '') if game_meta else '' }}</span></div>
-          <div class="meta-row"><span class="meta-label">Move #</span><span id="metaMove" class="meta-value">{{ (game_meta.moveNum or '') if game_meta else '' }}</span></div>
-          <div class="meta-row"><span class="meta-label">Opening</span><span id="metaOpening" class="meta-value meta-small">{{ (game_meta.opening_name or '') if game_meta else '' }}</span></div>
-          <div class="meta-row"><span class="meta-label">URL</span><span class="meta-value"><a id="metaGameLink" href="#" target="_blank" rel="noopener noreferrer"></a></span></div>
+          <div id="metaRowResult" class="meta-row"><span class="meta-label">Result</span><span id="metaResult" class="meta-value">{{ (game_meta.result or '') if game_meta else '' }}</span></div>
+          <div id="metaRowWhiteElo" class="meta-row"><span class="meta-label">White ELO</span><span id="metaWhiteElo" class="meta-value">{{ (game_meta.whiteElo or '') if game_meta else '' }}</span></div>
+          <div id="metaRowBlackElo" class="meta-row"><span class="meta-label">Black ELO</span><span id="metaBlackElo" class="meta-value">{{ (game_meta.blackElo or '') if game_meta else '' }}</span></div>
+          <div id="metaRowMoveNum" class="meta-row"><span class="meta-label">Move #</span><span id="metaMove" class="meta-value">{{ (game_meta.moveNum or '') if game_meta else '' }}</span></div>
+          <div id="metaRowOpening" class="meta-row"><span class="meta-label">Opening</span><span id="metaOpening" class="meta-value meta-small">{{ (game_meta.opening_name or '') if game_meta else '' }}</span></div>
+          <div id="metaRowWhitePlayer" class="meta-row"><span class="meta-label">White</span><span id="metaWhitePlayer" class="meta-value">{{ (game_meta.whitePlayer or '') if game_meta else '' }}</span></div>
+          <div id="metaRowBlackPlayer" class="meta-row"><span class="meta-label">Black</span><span id="metaBlackPlayer" class="meta-value">{{ (game_meta.blackPlayer or '') if game_meta else '' }}</span></div>
+          <div id="metaRowYear" class="meta-row"><span class="meta-label">Year</span><span id="metaYear" class="meta-value">{{ (game_meta.year or '') if game_meta else '' }}</span></div>
+          <div id="metaRowPgn" class="meta-row"><span class="meta-label">PGN</span><span class="meta-value"><a id="metaPgnLink" href="#" download> </a></span></div>
+          <div id="metaRowUrl" class="meta-row"><span class="meta-label">URL</span><span class="meta-value"><a id="metaGameLink" href="#" target="_blank" rel="noopener noreferrer"></a></span></div>
         </div>
         <div id="feedbackCard" class="feedback-card" style="display: none;">
           <div id="feedbackTitle" class="status-title"></div>
@@ -52,6 +60,7 @@
     <button id="btnNewRun" class="menu-btn" type="button">New Run</button>
     <button id="btnGithub" class="menu-btn" type="button">GitHub</button>
     <button id="btnAbout" class="menu-btn" type="button">About</button>
+    <button id="btnLichessBoard" class="menu-btn" type="button" aria-pressed="false">Lichess board</button>
   </nav>
 
   <!-- New Run modal -->
@@ -82,6 +91,14 @@
           </div>
           <div class="form-hint">From <span id="rsMinMoveVal">5</span> to <span id="rsMaxMoveVal">20</span></div>
         </div>
+
+        <div class="form-row">
+          <label class="form-label">Game source</label>
+          <div class="form-hint">
+            <label><input type="radio" name="rsSource" id="rsSourceLichess" value="lichess" checked /> lichess</label>
+            <label style="margin-left: 16px;"><input type="radio" name="rsSource" id="rsSourceMasters" value="world_champion" /> masters</label>
+          </div>
+        </div>
       </div>
       <div class="modal-footer">
         <button id="runCreateBtn" class="primary-btn" type="button">Create run</button>
@@ -100,6 +117,7 @@
     window.PRIOR_SUBMISSION = {{ (prior_submission or None)|tojson }};
     window.ALL_SUBMISSIONS = {{ (all_submissions or [])|tojson }};
     window.IS_DAILY = {{ (is_daily or False)|tojson }};
+    window.METADATA_FIELDS = {{ (metadata_fields or [])|tojson }};
   </script>
   <script src="{{ url_for('scripts', filename='main.js') }}"></script>
 </body>

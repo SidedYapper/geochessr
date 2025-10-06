@@ -69,6 +69,16 @@ body {
   place-items: center;
 }
 
+/* Lichess iframe should scale exactly like a board inside the shell */
+.lichess-iframe {
+  width: 100%;
+  height: 100%;
+  border: 4px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+  background: var(--border);
+}
+
 .boards {
   display: grid;
   grid-template-columns: auto auto clamp(240px, 22vw, 360px);
@@ -398,6 +408,13 @@ button:hover {
 }
 .menu-btn:hover {
   border-color: #475569;
+}
+
+/* Active state for toggle-style bottom buttons */
+.menu-btn[aria-pressed="true"] {
+  background: #1f2937; /* slate-800 */
+  color: #e5e7eb;      /* zinc-200 */
+  border-color: #475569; /* slate-600 */
 }
 
 /* Modal */

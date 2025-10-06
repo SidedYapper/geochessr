@@ -7,6 +7,8 @@ import chess.pgn
 import random
 from geo_server.model import GeoChess, ChessGame
 from geo_server.sqlite_wrapper import SQLiteWrapper
+import secrets
+import string
 from tqdm import tqdm
 import time
 
@@ -59,7 +61,7 @@ def get_games_from_tournament(tournament_id):
 
 
 def parse_games_from_pgn(pgn_file):
-    with open(pgn_file, "r") as f:
+    with open(pgn_file, "r", encoding="utf-8", errors="replace") as f:
         while True:
             pos = f.tell()
             game = chess.pgn.read_game(f)
@@ -69,9 +71,9 @@ def parse_games_from_pgn(pgn_file):
 
 
 def count_games_from_pgn(pgn_file):
-    with open(pgn_file, "r") as f:
+    with open(pgn_file, "r", encoding="utf-8", errors="replace") as f:
         content = f.read()
-        return content.count("\n\n\n")
+        return content.count("[Event")
 
 
 def extract_fens_from_game(
@@ -205,18 +207,37 @@ def create_and_store_geochess_from_pgn(
             fen=game.board().fen(),
             result=parse_result(game.headers["Result"]),
             url=game.headers["Site"],
-            whiteElo=game.headers["WhiteElo"],
-            blackElo=game.headers["BlackElo"],
-            timeControl=game.headers["TimeControl"],
-            gameId=game.headers["GameId"],
+            whiteElo=(
+                game.headers["WhiteElo"]
+                if ("WhiteElo" in game.headers and game.headers["WhiteElo"].isdigit())
+                else 0
+            ),
+            blackElo=(
+                game.headers["BlackElo"]
+                if ("BlackElo" in game.headers and game.headers["BlackElo"].isdigit())
+                else 0
+            ),
+            timeControl=(
+                game.headers["TimeControl"]
+                if "TimeControl" in game.headers
+                else "Unknown"
+            ),
+            gameId=(
+                game.headers["GameId"]
+                if "GameId" in game.headers
+                else "".join(secrets.choice(string.ascii_uppercase) for _ in range(8))
+            ),
             eco=game.headers["ECO"] if "ECO" in game.headers else None,
             whitePlayer=game.headers["White"],
             blackPlayer=game.headers["Black"],
             source=source,
-            source_file=pgn_file,
+            pgn=str(game),
             year=(
                 int(game.headers["Date"].split(".")[0])
-                if "Date" in game.headers
+                if (
+                    "Date" in game.headers
+                    and game.headers["Date"].split(".")[0].isdigit()
+                )
                 else None
             ),
         )
@@ -257,7 +278,7 @@ def add_geochess_to_database(sqlite_wrapper: SQLiteWrapper, n_tournaments: int =
 
 def store_the_world_champion_games(sqlite_wrapper: SQLiteWrapper):
     pgns_path = "data/world_champion_games"
-    for pgn_file in os.listdir(pgns_path):
+    for pgn_file in tqdm(os.listdir(pgns_path), desc="Parsing world champions"):
         create_and_store_geochess_from_pgn(
             os.path.join(pgns_path, pgn_file), sqlite_wrapper, source="world_champion"
         )
@@ -266,4 +287,5 @@ def store_the_world_champion_games(sqlite_wrapper: SQLiteWrapper):
 if __name__ == "__main__":
     sqlite_wrapper = SQLiteWrapper("database/geo_chess.db")
     sqlite_wrapper.reset_database()
+    store_the_world_champion_games(sqlite_wrapper)
     create_and_store_geochess_from_pgn("data/tournaments/8h042r8u.pgn", sqlite_wrapper)
