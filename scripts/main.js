@@ -226,17 +226,10 @@ document.addEventListener('DOMContentLoaded', function() {
     sfxAllCorrect = new Audio('/assets/sound/all_correct.mp3');
     [sfxCorrect, sfxIncorrect, sfxRunFinished, sfxAllCorrect].forEach(a => { if (a) a.preload = 'auto'; });
   } catch (_) {}
-  // Update titles with daily flag if applicable
+  // Toggle Daily Run title in meta card
   try {
-    if (window.IS_DAILY) {
-      const h = document.querySelector('h1.page-title');
-      if (h && !h.textContent.includes('Daily')) {
-        h.textContent = `${h.textContent} - Daily`;
-      }
-      if (document && document.title && !document.title.includes('Daily')) {
-        document.title = `${document.title} - Daily`;
-      }
-    }
+    const dailyTitle = document.getElementById('metaDailyTitle');
+    if (dailyTitle) dailyTitle.style.display = window.IS_DAILY ? '' : 'none';
   } catch (_) {}
   
   // Initialize submissions array from server data or create empty array
@@ -369,6 +362,7 @@ document.addEventListener('DOMContentLoaded', function() {
   const btnNewRun = document.getElementById('btnNewRun');
   const btnGithub = document.getElementById('btnGithub');
   const btnAbout = document.getElementById('btnAbout');
+  const btnDaily = document.getElementById('btnDaily');
   const btnLichess = document.getElementById('btnLichessBoard');
   const modal = document.getElementById('runModal');
   const modalClose = document.getElementById('runModalClose');
@@ -459,6 +453,52 @@ document.addEventListener('DOMContentLoaded', function() {
       window.location.href = '/about';
     });
   }
+  if (btnDaily) {
+    // Disable if already on a daily run
+    try {
+      if (window.IS_DAILY) {
+        btnDaily.setAttribute('disabled', '');
+        btnDaily.setAttribute('aria-disabled', 'true');
+        btnDaily.style.opacity = '0.5';
+        btnDaily.style.cursor = 'not-allowed';
+        btnDaily.title = 'You are already on the Daily run';
+      } else {
+        btnDaily.addEventListener('click', () => { window.location.href = '/daily'; });
+      }
+    } catch (_) {}
+  }
+
+  // Additional ways to advance to next puzzle in feedback phase
+  // 1) Right-click on the right board (context menu)
+  try {
+    if (board8El) {
+      board8El.addEventListener('contextmenu', (evt) => {
+        // Only act in feedback phase (overlay frozen) and when not on last puzzle
+        const isLast = (currentRunIndex === currentRunLen - 1);
+        if (!overlayFrozen || isLast) return;
+        evt.preventDefault();
+        // Trigger the same action as the Next button
+        handleNextClick();
+      });
+    }
+  } catch (_) {}
+  // 2) Spacebar key to advance when in feedback phase
+  try {
+    document.addEventListener('keydown', (evt) => {
+      // Normalize space detection and ignore if typing in inputs/textarea/contenteditable
+      const key = evt.key || evt.code || '';
+      const isSpace = key === ' ' || key === 'Spacebar' || key === 'Space';
+      if (!isSpace) return;
+      const target = evt.target;
+      const tag = (target && target.tagName) ? String(target.tagName).toLowerCase() : '';
+      const isEditable = (target && (target.isContentEditable === true)) || tag === 'input' || tag === 'textarea' || tag === 'select';
+      if (isEditable) return;
+      const isLast = (currentRunIndex === currentRunLen - 1);
+      if (!overlayFrozen || isLast) return;
+      evt.preventDefault();
+      handleNextClick();
+    });
+  } catch (_) {}
 
   // Simple cookie helpers
   function setCookie(name, value, days) {
@@ -1209,17 +1249,59 @@ function showRunSummary() {
     boxesContainer.appendChild(box);
   });
   
-  // Show score
-  scoreEl.textContent = `You solved ${correctCount}/${allSubmissions.length} correctly.`;
-  // Show elapsed time if provided by server
-  if (timeEl) {
-    if (typeof currentRunTimeTakenSeconds === 'number' && isFinite(currentRunTimeTakenSeconds)) {
-      timeEl.textContent = `Time taken: ${formatDuration(currentRunTimeTakenSeconds)}`;
+  // Build summary header and table with Yours vs Average
+  try {
+    const stats = (window.RUN_STATS && typeof window.RUN_STATS === 'object') ? window.RUN_STATS : { completedCount: 0, avgTimeSeconds: null, avgCorrectCount: null };
+    const completedCount = Number(stats.completedCount || 0);
+    const avgTimeSeconds = (stats.avgTimeSeconds != null && isFinite(Number(stats.avgTimeSeconds))) ? Number(stats.avgTimeSeconds) : null;
+    const avgCorrectCount = (stats.avgCorrectCount != null && isFinite(Number(stats.avgCorrectCount))) ? Number(stats.avgCorrectCount) : null;
+
+    const yoursSolved = `${correctCount}/${allSubmissions.length}`;
+    const avgSolved = (avgCorrectCount != null) ? `${Math.round(avgCorrectCount)}/${allSubmissions.length}` : '—';
+    const yoursTime = (typeof currentRunTimeTakenSeconds === 'number' && isFinite(currentRunTimeTakenSeconds)) ? formatDuration(currentRunTimeTakenSeconds) : '—';
+    const avgTime = (avgTimeSeconds != null) ? formatDuration(Math.round(avgTimeSeconds)) : '—';
+
+    const lines = [];
+    lines.push(`This run has been completed ${completedCount} ${completedCount === 1 ? 'time' : 'times'}.`);
+    lines.push('');
+    lines.push('|  | Yours | Average |');
+    lines.push('| --- | --- | --- |');
+    lines.push(`| Solved | ${yoursSolved} | ${avgSolved} |`);
+    lines.push(`| Time | ${yoursTime} | ${avgTime} |`);
+    const md = lines.join('\n');
+    if (scoreEl) scoreEl.textContent = '';
+    if (timeEl) {
       timeEl.style.display = '';
-    } else {
-      timeEl.textContent = '';
-      timeEl.style.display = 'none';
+      timeEl.innerHTML = '';
+      const pre = document.createElement('div');
+      pre.className = 'run-summary-table';
+      // simple markdown-ish rendering to table
+      // We'll parse the lines to a table element for accessibility
+      try {
+        const table = document.createElement('table');
+        // Add message above the table so it remains visible even if the table is hidden in portrait
+        const msg = document.createElement('div');
+        msg.className = 'run-summary-note';
+        msg.textContent = lines[0];
+        timeEl.appendChild(msg);
+        const thead = document.createElement('thead');
+        const trh = document.createElement('tr');
+        ['','Yours','Average'].forEach(txt => { const th = document.createElement('th'); th.textContent = txt; trh.appendChild(th); });
+        thead.appendChild(trh);
+        table.appendChild(thead);
+        const tbody = document.createElement('tbody');
+        const rows = [ ['Solved', yoursSolved, avgSolved], ['Time', yoursTime, avgTime] ];
+        rows.forEach(r => { const tr = document.createElement('tr'); r.forEach((cell, idx) => { const el = idx === 0 ? document.createElement('th') : document.createElement('td'); el.textContent = cell; tr.appendChild(el); }); tbody.appendChild(tr); });
+        table.appendChild(tbody);
+        timeEl.appendChild(table);
+      } catch (_) {
+        // Fallback to text
+        pre.textContent = md;
+        timeEl.appendChild(pre);
+      }
     }
+  } catch (_) {
+    // noop
   }
   
   // Show the summary
@@ -1728,7 +1810,17 @@ function applyLayoutSizing() {
   if (!isLandscape) {
     // Reset to CSS-controlled sizing in portrait
     wrapper.style.gridTemplateColumns = '';
-    document.documentElement.style.setProperty('--meta-scale', '1');
+    // Aggressively shrink meta/table on small portrait screens
+    const vh = window.innerHeight || 0;
+    const vw = window.innerWidth || 0;
+    const base = 1;
+    // Consider both height and width; target total content height a bit smaller for portrait
+    const targetH = 760;
+    const targetW = 420; // meta column typical width on portrait
+    const scaleH = vh > 0 ? Math.max(0.6, Math.min(1.0, vh / targetH)) : 1;
+    const scaleW = vw > 0 ? Math.max(0.6, Math.min(1.0, vw / targetW)) : 1;
+    const scale = Math.max(0.6, Math.min(1.0, Math.min(scaleH, scaleW)));
+    document.documentElement.style.setProperty('--meta-scale', String(scale));
     return;
   }
   const leftW = boardEl ? boardEl.getBoundingClientRect().width : 0;
@@ -1744,15 +1836,17 @@ function applyLayoutSizing() {
   metaW = Math.max(240, Math.min(420, metaW));
   wrapper.style.gridTemplateColumns = `auto auto ${metaW}px`;
 
-   // Scale meta content based on viewport height versus board size
-   const vh = window.innerHeight || 0;
-   if (vh > 0) {
-     // Target: boards plus meta should fit; when vh is small, shrink meta typography
-     // Compute a scale between 0.8 and 1.0 depending on height
-     const targetH = 820; // heuristic total content height
-     const scale = Math.max(0.8, Math.min(1.0, vh / targetH));
-     document.documentElement.style.setProperty('--meta-scale', String(scale));
-   }
+  // Scale meta content based on viewport size; allow more aggressive shrink to keep table in bounds
+  const vh = window.innerHeight || 0;
+  const vw = window.innerWidth || 0;
+  if (vh > 0 && vw > 0) {
+    const targetH = 820;
+    const targetW = 1240; // consider total layout width threshold for scaling
+    const scaleH = Math.max(0.6, Math.min(1.0, vh / targetH));
+    const scaleW = Math.max(0.6, Math.min(1.0, vw / targetW));
+    const scale = Math.max(0.6, Math.min(1.0, Math.min(scaleH, scaleW)));
+    document.documentElement.style.setProperty('--meta-scale', String(scale));
+  }
 }
 
 

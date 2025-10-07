@@ -39,3 +39,46 @@
   margin-top: 12px;
 }
 
+/* Layout the photo to the left of the content on landscape only */
+@media (orientation: landscape) {
+  .about-grid {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+  .about-photo img {
+    width: 100%;
+    height: auto;
+    display: block;
+    border-radius: 8px;
+    border: 1px solid #334155;
+  }
+}
+@media (orientation: portrait) {
+  .about-grid {
+    display: block;
+  }
+  .about-photo { display: none; }
+}
+
+.about-counters {
+  margin-top: 20px;
+  display: flex;
+  gap: 24px;
+  align-items: baseline;
+  justify-content: center;
+}
+.about-counters .counter {
+  display: flex;
+  gap: 8px;
+}
+.about-counters .counter-label {
+  color: var(--text-dim);
+}
+.about-counters .counter-value {
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+

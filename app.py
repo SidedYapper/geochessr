@@ -3,6 +3,7 @@ import random
 import threading
 import time
 from datetime import datetime, timedelta
+import hashlib
 import uuid
 from flask import (
     Flask,
@@ -64,6 +65,120 @@ def create_app() -> Flask:
     # -------------------- Session tracking for purge --------------------
     app.config.setdefault("SESSION_INDEX", {})  # sid -> last_access_ts (epoch seconds)
     app.config.setdefault("REVOKED_SIDS", set())
+    # -------------------- Counters (Redis in prod, in-memory in dev) --------------------
+    # Keys for Redis
+    COUNTER_KEY_PUZZLES = "geochessr:counters:puzzles_solved"
+    VISITOR_SET_KEY = "geochessr:counters:visitor_ip_hashes"
+
+    # In-memory fallbacks for development
+    app.config.setdefault("COUNTERS", {"puzzles_solved": 0})
+    app.config.setdefault("VISITOR_IP_HASHES", set())
+
+    def _redis_client():
+        try:
+            return (
+                app.config.get("SESSION_REDIS")
+                if os.getenv("FLASK_ENV") == "production"
+                else None
+            )
+        except Exception:
+            return None
+
+    def _get_client_ip() -> str:
+        try:
+            # Honor X-Forwarded-For if behind a proxy; use first IP
+            xff = request.headers.get("X-Forwarded-For")
+            if xff:
+                ip = xff.split(",")[0].strip()
+                if ip:
+                    return ip
+            xri = request.headers.get("X-Real-IP")
+            if xri:
+                return xri.strip()
+        except Exception:
+            pass
+        try:
+            return request.remote_addr or ""
+        except Exception:
+            return ""
+
+    def _hash_ip(ip: str) -> str:
+        try:
+            salt = str(app.secret_key or "")
+            h = hashlib.sha256((salt + "|" + (ip or "")).encode("utf-8")).hexdigest()
+            return h
+        except Exception:
+            # Always return a deterministic string even on failure
+            return hashlib.sha256((ip or "").encode("utf-8")).hexdigest()
+
+    def _increment_puzzles_solved():
+        rc = _redis_client()
+        if rc is not None:
+            try:
+                rc.incr(COUNTER_KEY_PUZZLES)
+                return
+            except Exception:
+                pass
+        # Fallback to in-memory
+        try:
+            counters = app.config.get("COUNTERS", {})
+            counters["puzzles_solved"] = int(counters.get("puzzles_solved", 0)) + 1
+            app.config["COUNTERS"] = counters
+        except Exception:
+            pass
+
+    def _get_counters() -> tuple[int, int]:
+        """Return (puzzles_solved_total, unique_visitors_total)."""
+        rc = _redis_client()
+        if rc is not None:
+            try:
+                # Puzzles solved from counter key
+                p = rc.get(COUNTER_KEY_PUZZLES)
+                puzzles = int(p) if p is not None else 0
+            except Exception:
+                puzzles = 0
+            try:
+                # Unique visitors from set cardinality
+                visitors = int(rc.scard(VISITOR_SET_KEY))
+            except Exception:
+                visitors = 0
+            return puzzles, visitors
+        # Dev: in-memory
+        try:
+            puzzles = int(app.config.get("COUNTERS", {}).get("puzzles_solved", 0))
+        except Exception:
+            puzzles = 0
+        try:
+            visitors = len(app.config.get("VISITOR_IP_HASHES", set()))
+        except Exception:
+            visitors = 0
+        return puzzles, visitors
+
+    def _maybe_count_unique_visitor(ip: str):
+        """Record a unique visitor by hashed IP if not seen before."""
+        try:
+            h = _hash_ip(ip or "")
+        except Exception:
+            return
+        rc = _redis_client()
+        if rc is not None:
+            try:
+                # SADD returns 1 if element added (new), 0 if existed
+                added = rc.sadd(VISITOR_SET_KEY, h)
+                # We rely on SCARD to display count; no separate counter increment needed
+                # (keeps value consistent on restarts)
+                _ = added
+                return
+            except Exception:
+                pass
+        # Dev: in-memory set
+        try:
+            seen = app.config.get("VISITOR_IP_HASHES", set())
+            if h not in seen:
+                seen.add(h)
+                app.config["VISITOR_IP_HASHES"] = seen
+        except Exception:
+            pass
 
     def _get_or_set_sid():
         sid = session.get("sid")
@@ -75,6 +190,8 @@ def create_app() -> Flask:
     @app.before_request
     def _track_session_last_access():
         try:
+            had_sid = bool(session.get("sid"))
+            old_sid = session.get("sid")
             sid = _get_or_set_sid()
             # If this sid was revoked by the background task, clear it now
             revoked = app.config.get("REVOKED_SIDS", set())
@@ -87,8 +204,13 @@ def create_app() -> Flask:
                 # Assign a fresh sid after clearing
                 session["sid"] = uuid.uuid4().hex
                 sid = session["sid"]
+                had_sid = False
             # Update last access time
             app.config["SESSION_INDEX"][sid] = time.time()
+            # If a new session was just created, and the IP is new overall, record visitor
+            if not had_sid:
+                ip = _get_client_ip()
+                _maybe_count_unique_visitor(ip)
         except Exception:
             # Do not block requests on tracking errors
             pass
@@ -160,7 +282,10 @@ def create_app() -> Flask:
 
     @app.route("/about")
     def about_page():
-        return render_template("about.html")
+        puzzles, visitors = _get_counters()
+        return render_template(
+            "about.html", puzzles_solved_count=puzzles, unique_visitors_count=visitors
+        )
 
     # -------------------- Daily background task --------------------
     def _seconds_until_next_midnight() -> float:
@@ -427,6 +552,9 @@ def create_app() -> Flask:
             prior_submission=prior_sub,
             all_submissions=all_subs,
             metadata_fields=run.metadata_fields,
+            run_completed_count=getattr(run, "completed_count", 0),
+            run_avg_time_seconds=getattr(run, "avg_time_seconds", None),
+            run_avg_correct_count=getattr(run, "avg_correct_count", None),
         )
 
     @app.route("/styles/<path:filename>")
@@ -578,10 +706,38 @@ def create_app() -> Flask:
                                     max(0, time.time() - float(start_ts))
                                 )
                                 st["time_taken_seconds"] = time_taken_seconds
+                                # Persist run completion stats to DB
+                                try:
+                                    # Compute correct count
+                                    correct_count = sum(
+                                        1 for s in submissions if s and s.get("correct")
+                                    )
+                                    db_path2 = os.path.join(
+                                        base_dir, "database", "geo_chess.db"
+                                    )
+                                    wrapper_stats = SQLiteWrapper(db_path2)
+                                    wrapper_stats.update_run_completion_stats(
+                                        active_run_id,
+                                        time_taken_seconds,
+                                        correct_count,
+                                        len(submissions),
+                                    )
+                                    try:
+                                        wrapper_stats.conn.close()
+                                    except Exception:
+                                        pass
+                                except Exception:
+                                    pass
                     except Exception:
                         pass
                     runs_state[active_run_id] = st
                     session["runs"] = runs_state
+        except Exception:
+            pass
+
+        # Increment total puzzles-solved counter on every valid check
+        try:
+            _increment_puzzles_solved()
         except Exception:
             pass
 

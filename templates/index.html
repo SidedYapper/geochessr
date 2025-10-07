@@ -8,7 +8,7 @@
 </head>
 <body>
   <main class="container">
-    <h1 class="page-title">GeoChessr{% if is_daily %} - Daily{% endif %}</h1>
+    <h1 class="page-title">GeoChessr</h1>
     <div class="boards">
       <div class="board-wrapper">
         <div id="labelLeft" class="board-label">Find these pieces</div>
@@ -26,6 +26,7 @@
       </div>
       <aside class="meta" aria-label="Game meta">
         <div class="meta-card">
+          <div id="metaDailyTitle" class="meta-title" style="display: none;">Daily Run</div>
           <div class="meta-row"><span class="meta-label">Puzzle #</span><span id="metaPuzzleNum" class="meta-value">{{ (run_index + 1) if run_index is not none else '' }}/{{ run_len if run_len else '' }}</span></div>
           <div id="metaRowResult" class="meta-row"><span class="meta-label">Result</span><span id="metaResult" class="meta-value">{{ (game_meta.result or '') if game_meta else '' }}</span></div>
           <div id="metaRowWhiteElo" class="meta-row"><span class="meta-label">White ELO</span><span id="metaWhiteElo" class="meta-value">{{ (game_meta.whiteElo or '') if game_meta else '' }}</span></div>
@@ -61,6 +62,7 @@
     <button id="btnNewRun" class="menu-btn" type="button">New Run</button>
     <button id="btnGithub" class="menu-btn" type="button">GitHub</button>
     <button id="btnAbout" class="menu-btn" type="button">About</button>
+    <button id="btnDaily" class="menu-btn" type="button">Daily</button>
     <button id="btnLichessBoard" class="menu-btn" type="button" aria-pressed="false">Show Game</button>
   </nav>
 
@@ -119,6 +121,11 @@
     window.ALL_SUBMISSIONS = {{ (all_submissions or [])|tojson }};
     window.IS_DAILY = {{ (is_daily or False)|tojson }};
     window.METADATA_FIELDS = {{ (metadata_fields or [])|tojson }};
+    window.RUN_STATS = {{ ({
+      'completedCount': (run_completed_count if run_completed_count is not none else 0),
+      'avgTimeSeconds': (run_avg_time_seconds if run_avg_time_seconds is not none else None),
+      'avgCorrectCount': (run_avg_correct_count if run_avg_correct_count is not none else None),
+    })|tojson }};
   </script>
   <script src="{{ url_for('scripts', filename='main.js') }}"></script>
 </body>

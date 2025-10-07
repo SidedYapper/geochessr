@@ -42,6 +42,9 @@ class Run(BaseModel):
     is_daily: bool
     black_info_rate: float
     metadata_fields: list[str]
+    completed_count: int = 0
+    avg_time_seconds: Optional[float] = None
+    avg_correct_count: Optional[float] = None
 
 
 class RunSettings(BaseModel):

@@ -5,6 +5,7 @@ from geo_server.model import GeoChess, ChessGame, RunSettings, Run
 class SQLiteWrapper:
     def __init__(self, db_path: str):
         self.conn = sqlite3.connect(db_path)
+        self.conn.execute("PRAGMA busy_timeout=5000;")
         self.initialize_tables()
 
     def reset_database(self):
@@ -30,7 +31,7 @@ class SQLiteWrapper:
             "CREATE TABLE IF NOT EXISTS chess_games (result REAL, url TEXT, whiteElo INTEGER, blackElo INTEGER, timeControl TEXT, gameId TEXT PRIMARY KEY, eco TEXT, whitePlayer TEXT, blackPlayer TEXT, source TEXT, year INTEGER, pgn TEXT)"
         )
         self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS runs (identifier TEXT PRIMARY KEY, is_daily INTEGER, black_info_rate REAL, metadata_fields TEXT)"
+            "CREATE TABLE IF NOT EXISTS runs (identifier TEXT PRIMARY KEY, is_daily INTEGER, black_info_rate REAL, metadata_fields TEXT, completed_count INTEGER DEFAULT 0, avg_time_seconds REAL, avg_correct_count REAL)"
         )
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS run_puzzles (run_id TEXT, puzzle_id INTEGER, PRIMARY KEY (run_id, puzzle_id))"
@@ -176,6 +177,12 @@ class SQLiteWrapper:
             where_clauses.append("difficulty <= ?")
             params.append(run_settings.max_difficulty)
 
+        join_sql = ""
+        if getattr(run_settings, "source", None):
+            join_sql = " JOIN chess_games cg ON cg.gameId = geo_chess.gameId"
+            where_clauses.append("cg.source = ?")
+            params.append(run_settings.source)
+
         base_where_sql = (
             (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
         )
@@ -189,12 +196,13 @@ class SQLiteWrapper:
             # First query: collect difficulties matching other constraints
             # Join to chess_games to allow source filtering later; but for difficulty sampling we don't need join
             diff_query = (
-                f"SELECT difficulty FROM geo_chess{base_where_sql} AND difficulty IS NOT NULL"
+                f"SELECT difficulty FROM geo_chess{join_sql}{base_where_sql} AND difficulty IS NOT NULL"
                 if base_where_sql
                 else "SELECT difficulty FROM geo_chess WHERE difficulty IS NOT NULL"
             )
             cursor = self.conn.execute(diff_query, tuple(params))
             diffs = [row[0] for row in cursor.fetchall() if row[0] is not None]
+            print(f"{len(diffs)} difficulties found")
             if not diffs:
                 return []
 
@@ -243,13 +251,6 @@ class SQLiteWrapper:
             final_params.append(percentile_bounds[0])
             final_where_clauses.append("difficulty <= ?")
             final_params.append(percentile_bounds[1])
-
-        # Optional source filter joins geo_chess to chess_games on gameId
-        join_sql = ""
-        if getattr(run_settings, "source", None):
-            join_sql = " JOIN chess_games cg ON cg.gameId = geo_chess.gameId"
-            final_where_clauses.append("cg.source = ?")
-            final_params.append(run_settings.source)
 
         final_where_sql = (
             (" WHERE " + " AND ".join(final_where_clauses))
@@ -322,12 +323,23 @@ class SQLiteWrapper:
 
     def insert_run(self, run: Run):
         self.conn.execute(
-            "INSERT INTO runs (identifier, is_daily, black_info_rate, metadata_fields) VALUES (?, ?, ?, ?)",
+            "INSERT INTO runs (identifier, is_daily, black_info_rate, metadata_fields, completed_count, avg_time_seconds, avg_correct_count) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 run.identifier,
                 run.is_daily,
                 run.black_info_rate,
                 ",".join(run.metadata_fields),
+                int(getattr(run, "completed_count", 0) or 0),
+                (
+                    float(getattr(run, "avg_time_seconds", None))
+                    if getattr(run, "avg_time_seconds", None) is not None
+                    else None
+                ),
+                (
+                    float(getattr(run, "avg_correct_count", None))
+                    if getattr(run, "avg_correct_count", None) is not None
+                    else None
+                ),
             ),
         )
         for puzzle_id in run.puzzle_ids:
@@ -339,7 +351,7 @@ class SQLiteWrapper:
 
     def get_run(self, identifier: str) -> Run:
         cursor = self.conn.execute(
-            "SELECT identifier, is_daily, black_info_rate, metadata_fields FROM runs WHERE identifier = ?",
+            "SELECT identifier, is_daily, black_info_rate, metadata_fields, completed_count, avg_time_seconds, avg_correct_count FROM runs WHERE identifier = ?",
             (identifier,),
         )
         result = cursor.fetchone()
@@ -357,11 +369,14 @@ class SQLiteWrapper:
             black_info_rate=result[2],
             puzzle_ids=puzzle_ids,
             metadata_fields=result[3].split(","),
+            completed_count=int(result[4] or 0),
+            avg_time_seconds=(float(result[5]) if result[5] is not None else None),
+            avg_correct_count=(float(result[6]) if result[6] is not None else None),
         )
 
     def get_daily_run(self) -> Run:
         cursor = self.conn.execute(
-            "SELECT identifier, is_daily, black_info_rate, metadata_fields FROM runs WHERE is_daily = 1",
+            "SELECT identifier, is_daily, black_info_rate, metadata_fields, completed_count, avg_time_seconds, avg_correct_count FROM runs WHERE is_daily = 1",
         )
         result = cursor.fetchone()
         if result is None:
@@ -377,8 +392,54 @@ class SQLiteWrapper:
             black_info_rate=result[2],
             puzzle_ids=puzzle_ids,
             metadata_fields=result[3].split(","),
+            completed_count=int(result[4] or 0),
+            avg_time_seconds=(float(result[5]) if result[5] is not None else None),
+            avg_correct_count=(float(result[6]) if result[6] is not None else None),
         )
 
     def remove_daily_run(self):
         self.conn.execute("UPDATE runs SET is_daily = 0 WHERE is_daily = 1")
+        self.conn.commit()
+
+    def update_run_completion_stats(
+        self,
+        run_id: str,
+        time_taken_seconds: int,
+        correct_count: int,
+        total_puzzles: int,
+    ):
+        """
+        Increment completed_count and update running averages for time and correct-count.
+        avg_time_seconds := previous_avg + (time_taken - previous_avg) / new_count
+        avg_correct_count := previous_avg + (correct_count - previous_avg) / new_count
+        """
+        # Fetch current values
+        cursor = self.conn.execute(
+            "SELECT completed_count, avg_time_seconds, avg_correct_count FROM runs WHERE identifier = ?",
+            (run_id,),
+        )
+        row = cursor.fetchone()
+        if row is None:
+            return
+        completed = int(row[0] or 0)
+        prev_avg_time = float(row[1]) if row[1] is not None else None
+        prev_avg_correct = float(row[2]) if row[2] is not None else None
+        new_completed = completed + 1
+        # Compute new averages
+        if prev_avg_time is None:
+            new_avg_time = float(time_taken_seconds)
+        else:
+            new_avg_time = prev_avg_time + (
+                float(time_taken_seconds) - prev_avg_time
+            ) / float(new_completed)
+        if prev_avg_correct is None:
+            new_avg_correct = float(correct_count)
+        else:
+            new_avg_correct = prev_avg_correct + (
+                float(correct_count) - prev_avg_correct
+            ) / float(new_completed)
+        self.conn.execute(
+            "UPDATE runs SET completed_count = ?, avg_time_seconds = ?, avg_correct_count = ? WHERE identifier = ?",
+            (new_completed, new_avg_time, new_avg_correct, run_id),
+        )
         self.conn.commit()

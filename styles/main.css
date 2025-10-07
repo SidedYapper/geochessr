@@ -215,6 +215,7 @@ body {
   gap: 12px;
   align-items: center;
   margin-top: 8px;
+  width: 100%;
 }
 
 .run-summary-boxes {
@@ -250,6 +251,51 @@ body {
   font-size: calc(clamp(13px, 1.8vw, 16px) * var(--meta-scale));
   color: var(--text);
   font-weight: 500;
+}
+.run-summary-note {
+  text-align: center;
+  font-size: calc(clamp(12px, 1.6vw, 14px) * var(--meta-scale));
+  margin-bottom: 8px;
+}
+
+/* Summary comparison table (Yours vs Average) */
+.run-summary-time table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  max-width: 100%;
+  table-layout: fixed;
+}
+.run-summary-time caption {
+  caption-side: top;
+  text-align: center;
+  margin-bottom: 15px;
+  font-size: calc(clamp(11px, 1.4vw, 14px) * var(--meta-scale));
+}
+.run-summary-time th,
+.run-summary-time td {
+  text-align: center;
+  padding: calc(3px * var(--meta-scale)) calc(5px * var(--meta-scale));
+  font-size: calc(clamp(11px, 1.4vw, 14px) * var(--meta-scale));
+  overflow-wrap: anywhere;
+}
+/* Inner grid lines only (no outer border) */
+.run-summary-time th + th,
+.run-summary-time td + td {
+  border-left: 1px solid #334155;
+}
+/* Ensure vertical border also between a header cell and the next data cell */
+.run-summary-time tr > * + * {
+  border-left: 1px solid #334155;
+}
+.run-summary-time tr + tr th,
+.run-summary-time tr + tr td {
+  border-top: 1px solid #334155;
+}
+/* Border between thead and first tbody row */
+.run-summary-time thead + tbody tr th,
+.run-summary-time thead + tbody tr td {
+  border-top: 1px solid #334155;
 }
 
 .copy-link-btn {
@@ -417,6 +463,12 @@ button:hover {
   border-color: #475569; /* slate-600 */
 }
 
+.meta-title {
+  font-size: calc(clamp(12px, 2.0vw, 20px) * var(--meta-scale));
+  font-weight: bold;
+  text-align: center;
+}
+
 /* Modal */
 .modal-overlay {
   position: fixed;
@@ -540,12 +592,23 @@ input[type=range] {
     margin-top: 0;
     width: auto; 
     max-width: 100%;
-    margin-left: -5vw;
+    /*margin-left: -5vw;*/
     justify-content: center;
+    align-items: start; /* prevent children from equal-height stretching */
   }
   .meta > .meta-card,
   .meta > .feedback-card {
     margin-top: 0;
+    align-self: start; /* allow independent heights */
+  }
+  /* Hide only the table in portrait for better fit; keep the message visible */
+  .run-summary-time table { display: none; }
+
+  /* Bottom menu tweaks for small screens */
+  .bottom-menu { gap: 8px; }
+  .menu-btn {
+    padding: 6px 10px;
+    font-size: 12px;
   }
 }
 

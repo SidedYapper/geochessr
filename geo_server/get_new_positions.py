@@ -44,6 +44,12 @@ def get_valid_tournament_ids():
             continue
         if "position" in tournament:
             continue
+        if (
+            not "clock" in tournament
+            or not "limit" in tournament["clock"]
+            or tournament["clock"]["limit"] <= 60
+        ):
+            continue
         ids.append(tournament["id"])
     return ids
 
@@ -289,4 +295,8 @@ if __name__ == "__main__":
     sqlite_wrapper = SQLiteWrapper("database/geo_chess.db")
     sqlite_wrapper.reset_database()
     store_the_world_champion_games(sqlite_wrapper)
-    create_and_store_geochess_from_pgn("data/tournaments/8h042r8u.pgn", sqlite_wrapper)
+    for f in tqdm(os.listdir("data/tournaments"), desc="Parsing lichess tournaments"):
+        create_and_store_geochess_from_pgn(
+            os.path.join("data/tournaments", f), sqlite_wrapper
+        )
+    add_geochess_to_database(sqlite_wrapper)
