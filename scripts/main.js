@@ -17,6 +17,7 @@ let currentCols = 0;
 let topLeftLight = true; // default
 let overlayFrozen = false;
 let feedbackLineEl = null;
+let feedbackBoxesEl = null;
 let feedbackSubfen = '';
 let isTouching = false;
 let lastTouchWithinBoard = false;
@@ -27,11 +28,13 @@ let currentRunLen = 0;
 let currentRunSubmissions = []; // Track all submissions for the current run
 let currentPgnObjectUrl = null; // Blob URL for PGN download (feedback phase)
 let useLichessEmbed = false; // user toggle for lichess board in feedback
+let currentRunTimeTakenSeconds = null; // Elapsed time reported by server when run finished
 
 // Sound effects
 let sfxCorrect = null;
 let sfxIncorrect = null;
 let sfxRunFinished = null;
+let sfxAllCorrect = null;
 
 // Share-link helper for first puzzle prompt (non-daily)
 let shareCopyHandler = null;
@@ -40,6 +43,7 @@ function playSfx(kind) {
   try {
     let audio = null;
     if (kind === 'run_finished') audio = sfxRunFinished;
+    else if (kind === 'all_correct') audio = sfxAllCorrect;
     else if (kind === 'correct') audio = sfxCorrect;
     else if (kind === 'incorrect') audio = sfxIncorrect;
     if (!audio) return;
@@ -55,6 +59,7 @@ function playSfxAndWait(kind) {
   try {
     let audio = null;
     if (kind === 'run_finished') audio = sfxRunFinished;
+    else if (kind === 'all_correct') audio = sfxAllCorrect;
     else if (kind === 'correct') audio = sfxCorrect;
     else if (kind === 'incorrect') audio = sfxIncorrect;
     if (!audio) return Promise.resolve();
@@ -212,12 +217,14 @@ document.addEventListener('DOMContentLoaded', function() {
   currentRunId = window.RUN_ID || null;
   currentRunIndex = Number(window.RUN_INDEX || 0);
   currentRunLen = Number(window.RUN_LEN || 0);
+  currentRunTimeTakenSeconds = null;
   // Initialize sounds after first user gesture will be required by browsers; creating upfront is fine
   try {
     sfxCorrect = new Audio('/assets/sound/correct.mp3');
     sfxIncorrect = new Audio('/assets/sound/incorrect.mp3');
     sfxRunFinished = new Audio('/assets/sound/run_finished.mp3');
-    [sfxCorrect, sfxIncorrect, sfxRunFinished].forEach(a => { if (a) a.preload = 'auto'; });
+    sfxAllCorrect = new Audio('/assets/sound/all_correct.mp3');
+    [sfxCorrect, sfxIncorrect, sfxRunFinished, sfxAllCorrect].forEach(a => { if (a) a.preload = 'auto'; });
   } catch (_) {}
   // Update titles with daily flag if applicable
   try {
@@ -377,6 +384,19 @@ document.addEventListener('DOMContentLoaded', function() {
   const rsSourceLichess = document.getElementById('rsSourceLichess');
   const rsSourceMasters = document.getElementById('rsSourceMasters');
 
+  // Determine if this run supports lichess URLs
+  const lichessAllowed = Array.isArray(window.METADATA_FIELDS) && window.METADATA_FIELDS.includes('url');
+  if (btnLichess && !lichessAllowed) {
+    try {
+      btnLichess.setAttribute('disabled', '');
+      btnLichess.setAttribute('aria-disabled', 'true');
+      btnLichess.setAttribute('aria-pressed', 'false');
+      btnLichess.style.opacity = '0.5';
+      btnLichess.style.cursor = 'not-allowed';
+      btnLichess.title = 'Unavailable for this run';
+    } catch (_) {}
+  }
+
   // Helpers to persist run settings in cookie
   function readRunSettingsFromUI() {
     let source = 'lichess';
@@ -461,35 +481,44 @@ document.addEventListener('DOMContentLoaded', function() {
 
   // Initialize lichess toggle from cookie or default to active on landscape
   try {
-    const saved = getCookie('lichessEmbed');
-    let initial = null;
-    if (saved === '1') initial = true;
-    else if (saved === '0') initial = false;
-    else initial = (window.innerWidth >= window.innerHeight); // active by default on landscape
-    useLichessEmbed = !!initial;
-    if (btnLichess) btnLichess.setAttribute('aria-pressed', useLichessEmbed ? 'true' : 'false');
-    // If we are already in feedback and a lichess URL is present, apply immediately
-    try {
-      const card = document.getElementById('feedbackCard');
-      if (card && card.style.display !== 'none') {
-        const link = document.getElementById('metaGameLink');
-        const href = link && link.href ? link.href : '';
-        if (useLichessEmbed && href && href.includes('lichess.org/')) {
-          let gameId = '';
-          let half = '';
-          try {
-            const m = href.match(/lichess\.org\/(\w+)\/\#(\d+)/);
-            if (m) { gameId = m[1]; half = m[2]; }
-          } catch(_) {}
-          toggleLichessEmbed(gameId, half);
-        } else {
-          toggleLichessEmbed('', '');
+    if (!lichessAllowed) {
+      useLichessEmbed = false;
+      if (btnLichess) btnLichess.setAttribute('aria-pressed', 'false');
+      toggleLichessEmbed('', '');
+    } else {
+      const saved = getCookie('lichessEmbed');
+      let initial = null;
+      if (saved === '1') initial = true;
+      else if (saved === '0') initial = false;
+      else initial = (window.innerWidth >= window.innerHeight); // active by default on landscape
+      useLichessEmbed = !!initial;
+      if (btnLichess) btnLichess.setAttribute('aria-pressed', useLichessEmbed ? 'true' : 'false');
+      // If we are already in feedback and a lichess URL is present, apply immediately
+      try {
+        const card = document.getElementById('feedbackCard');
+        if (card && card.style.display !== 'none') {
+          const link = document.getElementById('metaGameLink');
+          const href = link && link.href ? link.href : '';
+          if (useLichessEmbed && href && href.includes('lichess.org/')) {
+            let gameId = '';
+            let half = '';
+            try {
+              const m = href.match(/lichess\.org\/(\w+)\/\#(\d+)/);
+              if (m) { gameId = m[1]; half = m[2]; }
+            } catch(_) {}
+            toggleLichessEmbed(gameId, half);
+          } else {
+            toggleLichessEmbed('', '');
+          }
         }
-      }
-    } catch(_) {}
+      } catch(_) {}
+    }
   } catch(_) {}
   if (btnLichess) {
     btnLichess.addEventListener('click', () => {
+      if (!lichessAllowed || btnLichess.hasAttribute('disabled') || btnLichess.getAttribute('aria-disabled') === 'true') {
+        return;
+      }
       useLichessEmbed = !useLichessEmbed;
       btnLichess.setAttribute('aria-pressed', useLichessEmbed ? 'true' : 'false');
       // persist selection in cookie for 180 days
@@ -622,6 +651,10 @@ function clearBoard8Overlay() {
   if (feedbackLineEl) {
     feedbackLineEl.remove();
     feedbackLineEl = null;
+  }
+  if (feedbackBoxesEl) {
+    feedbackBoxesEl.remove();
+    feedbackBoxesEl = null;
   }
 }
 
@@ -897,13 +930,17 @@ async function submitBoard8Selection() {
       } else if (currentRunIndex >= 0 && currentRunIndex < currentRunSubmissions.length) {
         currentRunSubmissions[currentRunIndex] = { x: payload.x, y: payload.y, correct: data.correct };
       }
+      if (typeof data.timeTakenSeconds === 'number' && isFinite(data.timeTakenSeconds)) {
+        currentRunTimeTakenSeconds = data.timeTakenSeconds;
+      }
     }
 
     // Play sound: if last puzzle, play correct/incorrect first, then run_finished
     try {
       const isLastPuzzle = (currentRunIndex === currentRunLen - 1);
       if (isLastPuzzle) {
-        playSfxThen(data && data.correct ? 'correct' : 'incorrect', 'run_finished');
+        const correctCount = countCorrectSubmissions();
+        playSfxThen(data && data.correct ? 'correct' : 'incorrect', correctCount === currentRunLen ? 'all_correct' : 'run_finished');
       } else {
         playSfx(data && data.correct ? 'correct' : 'incorrect');
       }
@@ -918,6 +955,7 @@ async function submitBoard8Selection() {
       // Clear any existing overlays/line before layering anew
       const imgs = board8El.querySelectorAll('img.b8-overlay');
       imgs.forEach(img => img.remove());
+    if (feedbackBoxesEl) { feedbackBoxesEl.remove(); feedbackBoxesEl = null; }
       // Submission (ghosted)
       if (feedbackSubfen) {
         renderOverlayPiecesAt(lastOverlayTopLeft.row, lastOverlayTopLeft.col, feedbackSubfen, { opacity: 0.5 });
@@ -935,7 +973,17 @@ async function submitBoard8Selection() {
           // fallback to drawing nothing if parsing fails
         }
       }
-      // Re-draw arrow over overlays if incorrect
+      // Draw feedback borders (and arrow on top if incorrect)
+      try {
+        const { rows: wr, cols: wc } = parseMockFen(feedbackSubfen || '');
+        drawFeedbackBoxes({
+          submittedTopLeft: lastOverlayTopLeft,
+          correctTopLeft: { row: data.answer.y, col: data.answer.x },
+          windowRows: wr,
+          windowCols: wc,
+          isCorrect: !!data.correct,
+        });
+      } catch(_) {}
       if (!data.correct) {
         drawFeedbackLine(lastOverlayTopLeft, { col: data.answer.x, row: data.answer.y });
       }
@@ -1120,10 +1168,15 @@ function showResultMessage(resp) {
   } catch(_) {}
 }
 
+function countCorrectSubmissions() {
+  return currentRunSubmissions.filter(sub => sub && sub.correct).length;
+}
+
 function showRunSummary() {
   const runSummary = document.getElementById('runSummary');
   const boxesContainer = document.getElementById('runSummaryBoxes');
   const scoreEl = document.getElementById('runSummaryScore');
+  const timeEl = document.getElementById('runSummaryTime');
   const nextBtn = document.getElementById('nextButton');
   
   if (!runSummary || !boxesContainer || !scoreEl) return;
@@ -1158,6 +1211,16 @@ function showRunSummary() {
   
   // Show score
   scoreEl.textContent = `You solved ${correctCount}/${allSubmissions.length} correctly.`;
+  // Show elapsed time if provided by server
+  if (timeEl) {
+    if (typeof currentRunTimeTakenSeconds === 'number' && isFinite(currentRunTimeTakenSeconds)) {
+      timeEl.textContent = `Time taken: ${formatDuration(currentRunTimeTakenSeconds)}`;
+      timeEl.style.display = '';
+    } else {
+      timeEl.textContent = '';
+      timeEl.style.display = 'none';
+    }
+  }
   
   // Show the summary
   runSummary.style.display = 'flex';
@@ -1206,6 +1269,20 @@ function showRunSummary() {
   }
 }
 
+function formatDuration(totalSeconds) {
+  try {
+    const s = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const r = s % 60;
+    const pad = (n) => String(n).padStart(2, '0');
+    if (h > 0) return `${h}:${pad(m)}:${pad(r)}`;
+    return `${m}:${pad(r)}`;
+  } catch (_) {
+    return '';
+  }
+}
+
 async function replayPriorSubmission(x, y, correct) {
   // Hide labels immediately
   const lblL = document.getElementById('labelLeft');
@@ -1234,20 +1311,24 @@ async function replayPriorSubmission(x, y, correct) {
     });
     const data = await res.json();
     
-    // Show feedback card
-    showResultMessage(data);
-    // Sync all submissions to ensure complete run summary when at end
+    // Sync all submissions and time BEFORE showing the feedback card (so summary can use them)
     try {
       if (Array.isArray(data.allSubmissions) && data.allSubmissions.length) {
         currentRunSubmissions = data.allSubmissions.slice();
       }
+      if (typeof data.timeTakenSeconds === 'number' && isFinite(data.timeTakenSeconds)) {
+        currentRunTimeTakenSeconds = data.timeTakenSeconds;
+      }
     } catch(_) {}
+    // Show feedback card
+    showResultMessage(data);
     
     // Render ghost submission pieces and correct window pieces
     try {
       // Clear overlays
       const imgs = board8El.querySelectorAll('img.b8-overlay');
       imgs.forEach(img => img.remove());
+    if (feedbackBoxesEl) { feedbackBoxesEl.remove(); feedbackBoxesEl = null; }
       // Submission (ghost)
       if (feedbackSubfen) {
         renderOverlayPiecesAt(y, x, feedbackSubfen, { opacity: 0.5 });
@@ -1262,7 +1343,17 @@ async function replayPriorSubmission(x, y, correct) {
           renderCorrectWindowAt(ansY, ansX, placement, wr, wc);
         } catch (_) {}
       }
-      // Arrow on top if incorrect
+      // Borders and arrow
+      try {
+        const { rows: wr, cols: wc } = parseMockFen(feedbackSubfen || '');
+        drawFeedbackBoxes({
+          submittedTopLeft: { row: y, col: x },
+          correctTopLeft: { row: data.answer.y, col: data.answer.x },
+          windowRows: wr,
+          windowCols: wc,
+          isCorrect: !!data.correct,
+        });
+      } catch(_) {}
       if (!data.correct) {
         const submitted = { col: x, row: y };
         const answer = { col: data.answer.x, row: data.answer.y };
@@ -1467,12 +1558,13 @@ function drawFeedbackLine(submittedTopLeft, correctTopLeft) {
   const rect = board8El.getBoundingClientRect();
   const squareW = rect.width / 8;
   const squareH = rect.height / 8;
+  const strokeWidth = 10; // must match line stroke-width
 
   // Centers of rectangles
-  const subCenterX = (submittedTopLeft.col + currentCols / 2) * squareW;
-  const subCenterY = (submittedTopLeft.row + currentRows / 2) * squareH;
-  const corCenterX = (correctTopLeft.col + currentCols / 2) * squareW;
-  const corCenterY = (correctTopLeft.row + currentRows / 2) * squareH;
+  const subCenterX = (submittedTopLeft.col + currentCols / 2) * squareW-strokeWidth/2;
+  const subCenterY = (submittedTopLeft.row + currentRows / 2) * squareH-strokeWidth/2;
+  const corCenterX = (correctTopLeft.col + currentCols / 2) * squareW-strokeWidth/2;
+  const corCenterY = (correctTopLeft.row + currentRows / 2) * squareH-strokeWidth/2;
 
   // Create an SVG overlay positioned absolutely over the board
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -1488,7 +1580,6 @@ function drawFeedbackLine(submittedTopLeft, correctTopLeft) {
   const dx = corCenterX - subCenterX;
   const dy = corCenterY - subCenterY;
   const dist = Math.hypot(dx, dy) || 1;
-  const strokeWidth = 10; // must match line stroke-width
   const arrowHeadUnits = 3; // tip length in marker units (matches path 0->3)
   const headLenPx = arrowHeadUnits * strokeWidth; // because markerUnits=strokeWidth
   const shorten = Math.min(headLenPx, dist - 1); // keep at least 1px line
@@ -1533,6 +1624,67 @@ function drawFeedbackLine(submittedTopLeft, correctTopLeft) {
   board8El.style.position = 'relative';
   board8El.appendChild(svg);
   feedbackLineEl = svg;
+}
+
+// Draw green/red boxes around the dimx x dimy windows on the right board.
+// If isCorrect is true, only draw the green box at correctTopLeft.
+function drawFeedbackBoxes(opts) {
+  if (!opts) return;
+  const submittedTopLeft = opts.submittedTopLeft;
+  const correctTopLeft = opts.correctTopLeft;
+  const wr = Math.max(1, Math.min(8, Number(opts.windowRows) || 1));
+  const wc = Math.max(1, Math.min(8, Number(opts.windowCols) || 1));
+  const isCorrect = !!opts.isCorrect;
+
+  if (feedbackBoxesEl) { feedbackBoxesEl.remove(); feedbackBoxesEl = null; }
+
+  const rect = board8El.getBoundingClientRect();
+  const squareW = rect.width / 8;
+  const squareH = rect.height / 8;
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('class', 'feedback-boxes');
+  svg.setAttribute('width', String(rect.width));
+  svg.setAttribute('height', String(rect.height));
+  svg.style.position = 'absolute';
+  svg.style.left = '0';
+  svg.style.top = '0';
+  svg.style.pointerEvents = 'none';
+
+  // Pick a stroke width proportional to square size, clamped
+  const strokeW = Math.max(4, Math.min(10, Math.floor(Math.min(squareW, squareH) * 0.12)));
+
+  // Helper to add a rectangle whose stroke center aligns exactly with grid lines
+  function addRect(topLeft, color) {
+    const xEdge = topLeft.col * squareW;
+    const yEdge = topLeft.row * squareH;
+    const wEdge = wc * squareW;
+    const hEdge = wr * squareH;
+    // Position rect so its stroke is centered on the selection edges
+    const x = xEdge - strokeW / 2;
+    const y = yEdge - strokeW / 2;
+    const w = Math.max(0, wEdge);
+    const h = Math.max(0, hEdge);
+    const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    r.setAttribute('x', String(x));
+    r.setAttribute('y', String(y));
+    r.setAttribute('width', String(w));
+    r.setAttribute('height', String(h));
+    r.setAttribute('fill', 'none');
+    r.setAttribute('stroke', color);
+    r.setAttribute('stroke-width', String(strokeW));
+    r.setAttribute('stroke-opacity', '0.85');
+    svg.appendChild(r);
+  }
+
+  // Green border for correct
+  if (correctTopLeft) addRect(correctTopLeft, '#10b981');
+  // Red border for submitted if incorrect
+  if (!isCorrect && submittedTopLeft) addRect(submittedTopLeft, '#ef4444');
+
+  board8El.style.position = 'relative';
+  board8El.appendChild(svg);
+  feedbackBoxesEl = svg;
 }
 
 function enforceLeftBoardMaxHeight() {

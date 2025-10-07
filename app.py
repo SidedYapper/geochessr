@@ -361,6 +361,14 @@ def create_app() -> Flask:
                 run.puzzle_ids
             ),  # Each entry: None or {"x": int, "y": int, "correct": bool}
         }
+        # If this is the user's first time opening this run in this session,
+        # store a start timestamp for timekeeping
+        if st.get("start_ts") is None:
+            try:
+                st["start_ts"] = time.time()
+            except Exception:
+                # If time fails, skip storing
+                pass
         try:
             req_idx = int(request.args.get("index", "-1"))
         except Exception:
@@ -457,6 +465,49 @@ def create_app() -> Flask:
         if geo is None:
             return jsonify({"ok": False, "error": "Not found"}), 404
 
+        # ---- Validate coordinate bounds based on puzzle window size ----
+        try:
+            dimx = int(getattr(geo, "dimx", 0))
+            dimy = int(getattr(geo, "dimy", 0))
+            if dimx <= 0 or dimy <= 0 or dimx > 8 or dimy > 8:
+                return jsonify({"ok": False, "error": "Invalid puzzle dimensions"}), 400
+            max_x = 8 - dimx
+            max_y = 8 - dimy
+            if not (0 <= x <= max_x and 0 <= y <= max_y):
+                return jsonify({"ok": False, "error": "Coordinates out of bounds"}), 400
+        except Exception:
+            return jsonify({"ok": False, "error": "Invalid coordinates"}), 400
+
+        # ---- Validate that the submitted record belongs to the active run and index ----
+        try:
+            runs_state = session.get("runs") or {}
+            active_run_id = session.get("active_run_id")
+            if not active_run_id or active_run_id not in runs_state:
+                return jsonify({"ok": False, "error": "No active run"}), 400
+            st = runs_state[active_run_id]
+            cur_idx = int(st.get("current_index", 0))
+            # Fetch run to resolve expected record id
+            wrapper2 = SQLiteWrapper(db_path)
+            run = wrapper2.get_run(active_run_id)
+            try:
+                wrapper2.conn.close()
+            except Exception:
+                pass
+            if run is None or not run.puzzle_ids:
+                return jsonify({"ok": False, "error": "Run not found"}), 400
+            if cur_idx < 0 or cur_idx >= len(run.puzzle_ids):
+                return jsonify({"ok": False, "error": "Invalid run index"}), 400
+            expected_rec_id = int(run.puzzle_ids[cur_idx])
+            if expected_rec_id != rec_id:
+                return (
+                    jsonify(
+                        {"ok": False, "error": "Mismatched puzzle for current run"}
+                    ),
+                    400,
+                )
+        except Exception:
+            return jsonify({"ok": False, "error": "Invalid run context"}), 400
+
         posx = int(geo.posx)
         posy = int(geo.posy)
         correct = x == posx and y == posy
@@ -507,6 +558,7 @@ def create_app() -> Flask:
             runs_state = session.get("runs") or {}
             active_run_id = session.get("active_run_id")
             submissions = []
+            time_taken_seconds = None
             if active_run_id and active_run_id in runs_state:
                 st = runs_state[active_run_id]
                 idx = int(st.get("current_index", 0))
@@ -514,6 +566,20 @@ def create_app() -> Flask:
                 if 0 <= idx < len(submissions):
                     submissions[idx] = {"x": x, "y": y, "correct": bool(correct)}
                     st["submissions"] = submissions
+                    # Determine elapsed time: reuse frozen value if present, else compute once when completed
+                    try:
+                        existing = st.get("time_taken_seconds")
+                        if isinstance(existing, (int, float)):
+                            time_taken_seconds = int(existing)
+                        elif submissions and all(s is not None for s in submissions):
+                            start_ts = st.get("start_ts")
+                            if start_ts is not None:
+                                time_taken_seconds = int(
+                                    max(0, time.time() - float(start_ts))
+                                )
+                                st["time_taken_seconds"] = time_taken_seconds
+                    except Exception:
+                        pass
                     runs_state[active_run_id] = st
                     session["runs"] = runs_state
         except Exception:
@@ -534,6 +600,8 @@ def create_app() -> Flask:
                 "gameMeta": _build_game_meta(geo),
                 # Full submissions array for run summary on the client
                 "allSubmissions": submissions,
+                # Elapsed time for the run if completed (seconds)
+                "timeTakenSeconds": time_taken_seconds,
             }
         )
 
@@ -663,7 +731,7 @@ def create_app() -> Flask:
                 wrapper.conn.close()
             except Exception:
                 pass
-            return jsonify({"ok": False, "error": str(e)}), 500
+            return jsonify({"ok": False, "error": "Failed to create run"}), 500
         try:
             wrapper.conn.close()
         except Exception:

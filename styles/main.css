@@ -246,7 +246,7 @@ body {
   color: white;
 }
 
-.run-summary-score {
+.run-summary-score, .run-summary-time {
   font-size: calc(clamp(13px, 1.8vw, 16px) * var(--meta-scale));
   color: var(--text);
   font-weight: 500;
