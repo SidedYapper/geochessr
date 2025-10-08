@@ -280,6 +280,59 @@ def create_app() -> Flask:
     def daily():
         return _redirect_to_daily_run()
 
+    @app.route("/puzzle/<int:rec_id>")
+    def single_puzzle(rec_id: int):
+        db_path = os.path.join(base_dir, "database", "geo_chess.db")
+        wrapper = SQLiteWrapper(db_path)
+        geo = wrapper.get_geo_chess(rec_id)
+        try:
+            wrapper.conn.close()
+        except Exception:
+            pass
+        if geo is None:
+            return "Puzzle not found", 404
+
+        # Build unmasked metadata for single-puzzle view
+        game_meta = _build_game_meta(geo)
+        initial_subfen = geo.subfen
+        geochess_id = geo.id
+        try:
+            top_left_light = ((int(geo.posx) + int(geo.posy)) % 2) == 0
+        except Exception:
+            top_left_light = None
+        last_move_cells = _subfen_last_move_cells(geo)
+        # Use default metadata fields for single-puzzle mode (no URL)
+        try:
+            metadata_fields = SOURCE_METADATA_FIELDS.get("default", [])
+        except Exception:
+            metadata_fields = [
+                "result",
+                "whitePlayer",
+                "blackPlayer",
+                "move_num",
+                "opening_name",
+                "pgn",
+            ]
+        return render_template(
+            "index.html",
+            initial_subfen=initial_subfen,
+            geochess_id=geochess_id,
+            last_move_cells=last_move_cells,
+            top_left_light=top_left_light,
+            game_meta=game_meta,
+            run_id=None,
+            run_index=None,
+            run_len=None,
+            is_daily=False,
+            prior_submission=None,
+            all_submissions=[],
+            metadata_fields=metadata_fields,
+            run_completed_count=0,
+            run_avg_time_seconds=None,
+            run_avg_correct_count=None,
+            is_single_puzzle=True,
+        )
+
     @app.route("/about")
     def about_page():
         puzzles, visitors = _get_counters()
@@ -548,6 +601,7 @@ def create_app() -> Flask:
             run_id=run.identifier,
             run_index=index,
             run_len=len(run.puzzle_ids),
+            run_puzzle_ids=run.puzzle_ids,
             is_daily=run.is_daily,
             prior_submission=prior_sub,
             all_submissions=all_subs,
@@ -583,6 +637,13 @@ def create_app() -> Flask:
         except Exception:
             return jsonify({"ok": False, "error": "Invalid request"}), 400
 
+        # Single-puzzle mode flag (bypass run validation and state updates)
+        is_single = False
+        try:
+            is_single = bool(data.get("singlePuzzle"))
+        except Exception:
+            is_single = False
+
         db_path = os.path.join(base_dir, "database", "geo_chess.db")
         wrapper = SQLiteWrapper(db_path)
         geo = wrapper.get_geo_chess(rec_id)
@@ -607,34 +668,35 @@ def create_app() -> Flask:
             return jsonify({"ok": False, "error": "Invalid coordinates"}), 400
 
         # ---- Validate that the submitted record belongs to the active run and index ----
-        try:
-            runs_state = session.get("runs") or {}
-            active_run_id = session.get("active_run_id")
-            if not active_run_id or active_run_id not in runs_state:
-                return jsonify({"ok": False, "error": "No active run"}), 400
-            st = runs_state[active_run_id]
-            cur_idx = int(st.get("current_index", 0))
-            # Fetch run to resolve expected record id
-            wrapper2 = SQLiteWrapper(db_path)
-            run = wrapper2.get_run(active_run_id)
+        if not is_single:
             try:
-                wrapper2.conn.close()
+                runs_state = session.get("runs") or {}
+                active_run_id = session.get("active_run_id")
+                if not active_run_id or active_run_id not in runs_state:
+                    return jsonify({"ok": False, "error": "No active run"}), 400
+                st = runs_state[active_run_id]
+                cur_idx = int(st.get("current_index", 0))
+                # Fetch run to resolve expected record id
+                wrapper2 = SQLiteWrapper(db_path)
+                run = wrapper2.get_run(active_run_id)
+                try:
+                    wrapper2.conn.close()
+                except Exception:
+                    pass
+                if run is None or not run.puzzle_ids:
+                    return jsonify({"ok": False, "error": "Run not found"}), 400
+                if cur_idx < 0 or cur_idx >= len(run.puzzle_ids):
+                    return jsonify({"ok": False, "error": "Invalid run index"}), 400
+                expected_rec_id = int(run.puzzle_ids[cur_idx])
+                if expected_rec_id != rec_id:
+                    return (
+                        jsonify(
+                            {"ok": False, "error": "Mismatched puzzle for current run"}
+                        ),
+                        400,
+                    )
             except Exception:
-                pass
-            if run is None or not run.puzzle_ids:
-                return jsonify({"ok": False, "error": "Run not found"}), 400
-            if cur_idx < 0 or cur_idx >= len(run.puzzle_ids):
-                return jsonify({"ok": False, "error": "Invalid run index"}), 400
-            expected_rec_id = int(run.puzzle_ids[cur_idx])
-            if expected_rec_id != rec_id:
-                return (
-                    jsonify(
-                        {"ok": False, "error": "Mismatched puzzle for current run"}
-                    ),
-                    400,
-                )
-        except Exception:
-            return jsonify({"ok": False, "error": "Invalid run context"}), 400
+                return jsonify({"ok": False, "error": "Invalid run context"}), 400
 
         posx = int(geo.posx)
         posy = int(geo.posy)
@@ -681,59 +743,64 @@ def create_app() -> Flask:
                     last_move_cells.append({"r": dr, "c": dc})
         except Exception:
             pass
-        # Update session submission state for active run (if any)
-        try:
-            runs_state = session.get("runs") or {}
-            active_run_id = session.get("active_run_id")
-            submissions = []
-            time_taken_seconds = None
-            if active_run_id and active_run_id in runs_state:
-                st = runs_state[active_run_id]
-                idx = int(st.get("current_index", 0))
-                submissions = st.get("submissions") or []
-                if 0 <= idx < len(submissions):
-                    submissions[idx] = {"x": x, "y": y, "correct": bool(correct)}
-                    st["submissions"] = submissions
-                    # Determine elapsed time: reuse frozen value if present, else compute once when completed
-                    try:
-                        existing = st.get("time_taken_seconds")
-                        if isinstance(existing, (int, float)):
-                            time_taken_seconds = int(existing)
-                        elif submissions and all(s is not None for s in submissions):
-                            start_ts = st.get("start_ts")
-                            if start_ts is not None:
-                                time_taken_seconds = int(
-                                    max(0, time.time() - float(start_ts))
-                                )
-                                st["time_taken_seconds"] = time_taken_seconds
-                                # Persist run completion stats to DB
-                                try:
-                                    # Compute correct count
-                                    correct_count = sum(
-                                        1 for s in submissions if s and s.get("correct")
+        # Update session submission state for active run (if any, and not single-puzzle mode)
+        submissions = []
+        time_taken_seconds = None
+        if not is_single:
+            try:
+                runs_state = session.get("runs") or {}
+                active_run_id = session.get("active_run_id")
+                if active_run_id and active_run_id in runs_state:
+                    st = runs_state[active_run_id]
+                    idx = int(st.get("current_index", 0))
+                    submissions = st.get("submissions") or []
+                    if 0 <= idx < len(submissions):
+                        submissions[idx] = {"x": x, "y": y, "correct": bool(correct)}
+                        st["submissions"] = submissions
+                        # Determine elapsed time: reuse frozen value if present, else compute once when completed
+                        try:
+                            existing = st.get("time_taken_seconds")
+                            if isinstance(existing, (int, float)):
+                                time_taken_seconds = int(existing)
+                            elif submissions and all(
+                                s is not None for s in submissions
+                            ):
+                                start_ts = st.get("start_ts")
+                                if start_ts is not None:
+                                    time_taken_seconds = int(
+                                        max(0, time.time() - float(start_ts))
                                     )
-                                    db_path2 = os.path.join(
-                                        base_dir, "database", "geo_chess.db"
-                                    )
-                                    wrapper_stats = SQLiteWrapper(db_path2)
-                                    wrapper_stats.update_run_completion_stats(
-                                        active_run_id,
-                                        time_taken_seconds,
-                                        correct_count,
-                                        len(submissions),
-                                    )
+                                    st["time_taken_seconds"] = time_taken_seconds
+                                    # Persist run completion stats to DB
                                     try:
-                                        wrapper_stats.conn.close()
+                                        # Compute correct count
+                                        correct_count = sum(
+                                            1
+                                            for s in submissions
+                                            if s and s.get("correct")
+                                        )
+                                        db_path2 = os.path.join(
+                                            base_dir, "database", "geo_chess.db"
+                                        )
+                                        wrapper_stats = SQLiteWrapper(db_path2)
+                                        wrapper_stats.update_run_completion_stats(
+                                            active_run_id,
+                                            time_taken_seconds,
+                                            correct_count,
+                                            len(submissions),
+                                        )
+                                        try:
+                                            wrapper_stats.conn.close()
+                                        except Exception:
+                                            pass
                                     except Exception:
                                         pass
-                                except Exception:
-                                    pass
-                    except Exception:
-                        pass
-                    runs_state[active_run_id] = st
-                    session["runs"] = runs_state
-        except Exception:
-            pass
+                        except Exception:
+                            pass
+                        runs_state[active_run_id] = st
+                        session["runs"] = runs_state
+            except Exception:
+                pass
 
         # Increment total puzzles-solved counter on every valid check
         try:

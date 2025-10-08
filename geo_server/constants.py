@@ -16,4 +16,12 @@ metadata_fields = {
         "opening_name",
         "pgn",
     ],
+    "default": [
+        "result",
+        "whitePlayer",
+        "blackPlayer",
+        "move_num",
+        "opening_name",
+        "pgn",
+    ],
 }

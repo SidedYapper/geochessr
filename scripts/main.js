@@ -29,6 +29,7 @@ let currentRunSubmissions = []; // Track all submissions for the current run
 let currentPgnObjectUrl = null; // Blob URL for PGN download (feedback phase)
 let useLichessEmbed = false; // user toggle for lichess board in feedback
 let currentRunTimeTakenSeconds = null; // Elapsed time reported by server when run finished
+let IS_SINGLE = false; // single-puzzle mode flag (global for cross-function access)
 
 // Sound effects
 let sfxCorrect = null;
@@ -217,6 +218,7 @@ document.addEventListener('DOMContentLoaded', function() {
   currentRunId = window.RUN_ID || null;
   currentRunIndex = Number(window.RUN_INDEX || 0);
   currentRunLen = Number(window.RUN_LEN || 0);
+  IS_SINGLE = !!window.IS_SINGLE_PUZZLE;
   currentRunTimeTakenSeconds = null;
   // Initialize sounds after first user gesture will be required by browsers; creating upfront is fine
   try {
@@ -282,9 +284,9 @@ document.addEventListener('DOMContentLoaded', function() {
     }, 100);
   }
 
-  // For the first puzzle of non-daily runs, show an initial share prompt
+  // For the first puzzle of non-daily runs, show an initial share prompt (skip in single-puzzle mode)
   try {
-    if (!window.IS_DAILY && currentRunIndex === 0 && !priorSub) {
+    if (!IS_SINGLE && !window.IS_DAILY && currentRunIndex === 0 && !priorSub) {
       const card = document.getElementById('feedbackCard');
       const title = document.getElementById('feedbackTitle');
       const nextBtn = document.getElementById('nextButton');
@@ -350,7 +352,12 @@ document.addEventListener('DOMContentLoaded', function() {
     const allowed = new Set(fields);
     Object.entries(metaRows).forEach(([key, row]) => {
       if (!row) return;
-      // URL and PGN hidden until feedback
+      // In single-puzzle mode, show all allowed immediately (including URL/PGN)
+      if (IS_SINGLE) {
+        row.style.display = allowed.has(key) ? '' : 'none';
+        return;
+      }
+      // In run mode, URL and PGN hidden until feedback
       if (key === 'url' || key === 'pgn') {
         row.style.display = 'none';
         return;
@@ -993,6 +1000,7 @@ async function submitBoard8Selection() {
     }
   } catch(_) {}
   const payload = { id, x: lastOverlayTopLeft.col, y: lastOverlayTopLeft.row };
+  if (IS_SINGLE) payload.singlePuzzle = true;
   try {
     const res = await fetch('/api/check_position', {
       method: 'POST',
@@ -1015,7 +1023,7 @@ async function submitBoard8Selection() {
 
     // Play sound: if last puzzle, play correct/incorrect first, then run_finished
     try {
-      const isLastPuzzle = (currentRunIndex === currentRunLen - 1);
+      const isLastPuzzle = (IS_SINGLE || (currentRunIndex === currentRunLen - 1));
       if (isLastPuzzle) {
         const correctCount = countCorrectSubmissions();
         playSfxThen(data && data.correct ? 'correct' : 'incorrect', correctCount === currentRunLen ? 'all_correct' : 'run_finished');
@@ -1186,14 +1194,31 @@ function showResultMessage(resp) {
     card.classList.add(resp.correct ? 'success' : 'error');
     nextBtn.classList.remove('success', 'error', 'new-run');
     
-    // Check if this is the last puzzle
-    const isLastPuzzle = (currentRunIndex === currentRunLen - 1);
+  // Check if this is the last puzzle (or single-puzzle mode)
+  const isLastPuzzle = (IS_SINGLE || (currentRunIndex === currentRunLen - 1));
     
     if (isLastPuzzle) {
-      // Hide Next button and show run summary
-      nextBtn.style.display = 'none';
-      if (runSummary) {
-        showRunSummary();
+      if (IS_SINGLE) {
+        // Single-puzzle: show Start New Run button instead of Next/summary
+        if (runSummary) runSummary.style.display = 'none';
+        nextBtn.style.display = 'block';
+        nextBtn.textContent = 'Start new run';
+        nextBtn.classList.remove('success', 'error');
+        nextBtn.classList.add('new-run');
+        if (!nextBtn.dataset.newRunBound) {
+          try { nextBtn.removeEventListener('click', handleNextClick); } catch(_) {}
+          nextBtn.addEventListener('click', () => {
+            const newRunBtn = document.getElementById('btnNewRun');
+            if (newRunBtn) { newRunBtn.click(); return; }
+            const modal = document.getElementById('runModal');
+            if (modal) modal.style.display = 'grid';
+          });
+          nextBtn.dataset.newRunBound = '1';
+        }
+      } else {
+        // Run mode: hide Next and show summary
+        nextBtn.style.display = 'none';
+        if (runSummary) { showRunSummary(); }
       }
     } else {
       // Show Next button with success/error styling
@@ -1206,15 +1231,17 @@ function showResultMessage(resp) {
         delete nextBtn.dataset.shareBound;
         shareCopyHandler = null;
       }
-      // Attach the handler once
-      if (!nextBtn.dataset.bound) {
-        nextBtn.addEventListener('click', handleNextClick);
-        nextBtn.dataset.bound = '1';
+      // Attach the handler once (not in single-puzzle mode)
+      if (!IS_SINGLE) {
+        if (!nextBtn.dataset.bound) {
+          nextBtn.addEventListener('click', handleNextClick);
+          nextBtn.dataset.bound = '1';
+        }
       }
     }
   }
 
-  // Reveal URL row in feedback if it is part of run metadata fields
+  // Reveal URL row in feedback if it is part of run metadata fields (always visible in single-puzzle if allowed)
   try {
     const fields = Array.isArray(window.METADATA_FIELDS) ? window.METADATA_FIELDS : [];
     const allowed = new Set(fields);
@@ -1256,6 +1283,7 @@ function showRunSummary() {
   const scoreEl = document.getElementById('runSummaryScore');
   const timeEl = document.getElementById('runSummaryTime');
   const nextBtn = document.getElementById('nextButton');
+  const runPuzzleIds = Array.isArray(window.RUN_PUZZLE_IDS) ? window.RUN_PUZZLE_IDS : [];
   
   if (!runSummary || !boxesContainer || !scoreEl) return;
   
@@ -1283,6 +1311,18 @@ function showRunSummary() {
       box.classList.add('incorrect');
       box.innerHTML = '✕';
     }
+    // Make box clickable to open the corresponding puzzle in a new tab
+    try {
+      const recId = runPuzzleIds && runPuzzleIds[idx] != null ? runPuzzleIds[idx] : null;
+      if (recId != null) {
+        box.style.cursor = 'pointer';
+        box.title = 'Open this puzzle';
+        box.addEventListener('click', (e) => {
+          e.preventDefault();
+          window.open(`/puzzle/${encodeURIComponent(recId)}`, '_blank', 'noopener,noreferrer');
+        });
+      }
+    } catch (_) {}
     
     boxesContainer.appendChild(box);
   });
@@ -1382,6 +1422,8 @@ function showRunSummary() {
     if (!nextBtn.dataset.newRunBound) {
       nextBtn.removeEventListener('click', handleNextClick);
       nextBtn.addEventListener('click', () => {
+        const newRunBtn = document.getElementById('btnNewRun');
+        if (newRunBtn) { newRunBtn.click(); return; }
         const modal = document.getElementById('runModal');
         if (modal) modal.style.display = 'grid';
       });

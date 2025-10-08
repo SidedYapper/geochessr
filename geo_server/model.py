@@ -7,7 +7,7 @@ class ChessGame(BaseModel):
     whiteElo: int
     blackElo: int
     timeControl: str
-    gameId: str
+    gameId: Optional[str] = None
     url: Optional[str] = None
     year: Optional[int] = None
     eco: Optional[str] = None

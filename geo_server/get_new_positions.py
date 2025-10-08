@@ -1,4 +1,5 @@
 import requests
+import hashlib
 from functools import reduce
 from operator import mul
 from typing import Optional
@@ -26,8 +27,8 @@ def parse_result(result: str):
 
 def parse_move(move: str) -> tuple[tuple[int, int], tuple[int, int]]:
     letters = "abcdefgh"
-    return (letters.index(move[0]), int(move[1])), (
-        letters.index(move[2]),
+    return (letters.index(move[0]) + 1, int(move[1])), (
+        letters.index(move[2]) + 1,
         int(move[3]),
     )
 
@@ -128,6 +129,7 @@ def compute_subfen_stats(geo_chess: GeoChess):
     stats = {}
     subfen = geo_chess.subfen
     last_move = parse_move(geo_chess.last_move)
+
     stats["white_pawn_count"] = subfen.count("P")
     stats["black_pawn_count"] = subfen.count("p")
     stats["pawn_count"] = stats["white_pawn_count"] + stats["black_pawn_count"]
@@ -139,10 +141,12 @@ def compute_subfen_stats(geo_chess: GeoChess):
     stats["piece_pawn_count"] = stats["white_count"] + stats["black_count"]
     stats["king_count"] = subfen.count("K") + subfen.count("k")
 
+    corrected_posy = 8 - geo_chess.posy
+    corrected_posx = geo_chess.posx + 1
     stats["last_move_in_subfen"] = any(
         [
-            geo_chess.posx <= x < geo_chess.posx + geo_chess.dimx
-            and geo_chess.posy <= y < geo_chess.posy + geo_chess.dimy
+            corrected_posx <= x < corrected_posx + geo_chess.dimx
+            and corrected_posy - geo_chess.dimy < y <= corrected_posy
             for x, y in last_move
         ]
     )
@@ -169,7 +173,7 @@ def compute_difficulty(geo_chess: GeoChess):
         - stats["last_move_in_subfen"]
         - geo_chess.dimx * geo_chess.dimy
         - int(stats["king_count"] > 0) * 2
-        + geo_chess.move_num // 3
+        + geo_chess.move_num // 8
     )
     geo_chess.difficulty = difficulty
 
@@ -182,8 +186,8 @@ def score_subfen(geo_chess: GeoChess):
         + stats["last_move_in_subfen"]
         + (stats["moved_piece_pawn_count"] > 1)
         + (stats["pawn_count"] > 0)
-        + (stats["white_piece_count"] > 0)
-        + (stats["black_piece_count"] > 0)
+        + (stats["white_count"] > 0)
+        + (stats["black_count"] > 0)
         + (stats["piece_count"] > 0)
         - (stats["king_count"] > 0)
         - (stats["unmoved_piece_pawn_count"] > 2)
@@ -196,6 +200,57 @@ def unsimplify_subfen(subfen: str):
     for i in range(9, 1, -1):
         subfen = subfen.replace("1" * i, str(i))
     return subfen
+
+
+def get_chess_game_from_game(game: chess.pgn.Game, source: str = "lichess"):
+    def compute_game_id_from_headers(headers):
+        # Use a tuple of relevant fields to create a deterministic hash
+        relevant_fields = (
+            headers.get("Result", ""),
+            headers.get("Site", ""),
+            headers.get("WhiteElo", ""),
+            headers.get("BlackElo", ""),
+            headers.get("TimeControl", ""),
+            headers.get("ECO", ""),
+            headers.get("White", ""),
+            headers.get("Black", ""),
+            headers.get("Date", ""),
+        )
+        hash_input = "|".join(str(f) for f in relevant_fields)
+        return hashlib.sha256(hash_input.encode("utf-8")).hexdigest()[:16]
+
+    return ChessGame(
+        result=parse_result(game.headers["Result"]),
+        url=game.headers["Site"],
+        whiteElo=(
+            game.headers["WhiteElo"]
+            if ("WhiteElo" in game.headers and game.headers["WhiteElo"].isdigit())
+            else 0
+        ),
+        blackElo=(
+            game.headers["BlackElo"]
+            if ("BlackElo" in game.headers and game.headers["BlackElo"].isdigit())
+            else 0
+        ),
+        timeControl=(
+            game.headers["TimeControl"] if "TimeControl" in game.headers else "Unknown"
+        ),
+        gameId=(
+            game.headers["GameId"]
+            if "GameId" in game.headers
+            else compute_game_id_from_headers(game.headers)
+        ),
+        eco=game.headers["ECO"] if "ECO" in game.headers else None,
+        whitePlayer=game.headers["White"],
+        blackPlayer=game.headers["Black"],
+        source=source,
+        pgn=str(game),
+        year=(
+            int(game.headers["Date"].split(".")[0])
+            if ("Date" in game.headers and game.headers["Date"].split(".")[0].isdigit())
+            else None
+        ),
+    )
 
 
 def create_and_store_geochess_from_pgn(
@@ -211,44 +266,13 @@ def create_and_store_geochess_from_pgn(
         desc="Parsing games",
         total=count_games_from_pgn(pgn_file),
     ):
-        chess_game = ChessGame(
-            fen=game.board().fen(),
-            result=parse_result(game.headers["Result"]),
-            url=game.headers["Site"],
-            whiteElo=(
-                game.headers["WhiteElo"]
-                if ("WhiteElo" in game.headers and game.headers["WhiteElo"].isdigit())
-                else 0
-            ),
-            blackElo=(
-                game.headers["BlackElo"]
-                if ("BlackElo" in game.headers and game.headers["BlackElo"].isdigit())
-                else 0
-            ),
-            timeControl=(
-                game.headers["TimeControl"]
-                if "TimeControl" in game.headers
-                else "Unknown"
-            ),
-            gameId=(
-                game.headers["GameId"]
-                if "GameId" in game.headers
-                else "".join(secrets.choice(string.ascii_uppercase) for _ in range(8))
-            ),
-            eco=game.headers["ECO"] if "ECO" in game.headers else None,
-            whitePlayer=game.headers["White"],
-            blackPlayer=game.headers["Black"],
-            source=source,
-            pgn=str(game),
-            year=(
-                int(game.headers["Date"].split(".")[0])
-                if (
-                    "Date" in game.headers
-                    and game.headers["Date"].split(".")[0].isdigit()
-                )
-                else None
-            ),
-        )
+        chess_game = get_chess_game_from_game(game, source)
+        if (
+            chess_game.eco is None
+            or chess_game.whitePlayer == "?"
+            or chess_game.blackPlayer == "?"
+        ):
+            continue
         for board in extract_fens_from_game(game):
             fen = board.fen()
             for dim in dims:
