@@ -186,6 +186,7 @@ def score_subfen(geo_chess: GeoChess):
         + (stats["black_piece_count"] > 0)
         + (stats["piece_count"] > 0)
         - (stats["king_count"] > 0)
+        - (stats["unmoved_piece_pawn_count"] > 2)
     )
 
     geo_chess.score = score

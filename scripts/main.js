@@ -299,7 +299,8 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!nextBtn.dataset.shareBound) {
           shareCopyHandler = async () => {
             try {
-              const url = window.location.href;
+              const loc = window.location;
+              const url = `${loc.origin}${loc.pathname}`; // strip query/hash
               await navigator.clipboard.writeText(url);
               const old = nextBtn.textContent;
               nextBtn.textContent = 'Copied!';
@@ -888,6 +889,41 @@ function updateOverlayAtClientXY(clientX, clientY) {
   // Save current top-left for submission
   lastOverlayTopLeft = { row: startRow, col: startCol };
   lastTouchWithinBoard = true;
+  // During touch interaction, show a blue selection box around the current window
+  if (isTouching) {
+    // Remove any prior selection/feedback boxes before drawing a fresh one
+    if (feedbackBoxesEl) { feedbackBoxesEl.remove(); feedbackBoxesEl = null; }
+    const rectBoard = board8El.getBoundingClientRect();
+    const squareW2 = rectBoard.width / 8;
+    const squareH2 = rectBoard.height / 8;
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'feedback-boxes');
+    svg.setAttribute('width', String(rectBoard.width));
+    svg.setAttribute('height', String(rectBoard.height));
+    svg.style.position = 'absolute';
+    svg.style.left = '0';
+    svg.style.top = '0';
+    svg.style.pointerEvents = 'none';
+    // Match feedback stroke sizing
+    const strokeW = Math.max(4, Math.min(10, Math.floor(Math.min(squareW2, squareH2) * 0.12)));
+    const xEdge = startCol * squareW2;
+    const yEdge = startRow * squareH2;
+    const wEdge = cols * squareW2;
+    const hEdge = rows * squareH2;
+    const r = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    r.setAttribute('x', String(xEdge - strokeW / 2));
+    r.setAttribute('y', String(yEdge - strokeW / 2));
+    r.setAttribute('width', String(Math.max(0, wEdge)));
+    r.setAttribute('height', String(Math.max(0, hEdge)));
+    r.setAttribute('fill', 'none');
+    r.setAttribute('stroke', '#3b82f6'); // blue
+    r.setAttribute('stroke-width', String(strokeW));
+    r.setAttribute('stroke-opacity', '0.85');
+    svg.appendChild(r);
+    board8El.style.position = 'relative';
+    board8El.appendChild(svg);
+    feedbackBoxesEl = svg;
+  }
   return true;
 }
 
@@ -919,6 +955,8 @@ function handleBoard8TouchEnd(evt) {
   // Suppress the click event that some browsers fire after touchend
   suppressNextClick = true;
   isTouching = false;
+  // Remove the temporary blue selection box (will be redrawn by feedback later as needed)
+  if (feedbackBoxesEl && !overlayFrozen) { feedbackBoxesEl.remove(); feedbackBoxesEl = null; }
   if (!endedInside) {
     clearBoard8Overlay();
     return;
@@ -1312,7 +1350,8 @@ function showRunSummary() {
   if (copyLinkBtn && !copyLinkBtn.dataset.bound) {
     copyLinkBtn.addEventListener('click', async () => {
       try {
-        const url = window.location.href;
+        const loc = window.location;
+        const url = `${loc.origin}${loc.pathname}`; // strip query/hash
         await navigator.clipboard.writeText(url);
         // Visual feedback
         copyLinkBtn.textContent = 'Copied!';

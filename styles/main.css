@@ -166,9 +166,10 @@ body {
 }
 
 .next-btn {
-  margin-top: 12px;
+  margin-top: 12px * var(--meta-scale);
   width: 100%;
   padding: calc(clamp(8px, 1vw, 12px) * var(--meta-scale)) calc(clamp(10px, 1.2vw, 14px) * var(--meta-scale));
+  font-size: calc(clamp(10px, 1.6vw, 14px) * var(--meta-scale));
   border-radius: 8px;
   border: 1px solid #334155;
   font-weight: 700;
@@ -299,7 +300,7 @@ body {
 }
 
 .copy-link-btn {
-  margin-top: 8px;
+  margin-top: 8px * var(--meta-scale);
   padding: calc(clamp(8px, 1.2vw, 12px) * var(--meta-scale)) calc(clamp(14px, 2vw, 20px) * var(--meta-scale));
   border: 1px solid #475569;
   background: #1e293b;
@@ -308,7 +309,7 @@ body {
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s ease;
-  font-size: calc(clamp(12px, 1.6vw, 14px) * var(--meta-scale));
+  font-size: calc(clamp(9px, 1.3vw, 12px) * var(--meta-scale));
 }
 
 .copy-link-btn:hover {
@@ -602,7 +603,11 @@ input[type=range] {
     align-self: start; /* allow independent heights */
   }
   /* Hide only the table in portrait for better fit; keep the message visible */
-  .run-summary-time table { display: none; }
+  .run-summary-time th,
+  .run-summary-time td {
+    font-size: calc(clamp(7px, 1.1vw, 11px) * var(--meta-scale));
+    padding: calc(1.5px * var(--meta-scale)) calc(2.5px * var(--meta-scale));
+  }
 
   /* Bottom menu tweaks for small screens */
   .bottom-menu { gap: 8px; }
