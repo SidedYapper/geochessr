@@ -38,6 +38,8 @@
           <div id="metaRowWhitePlayer" class="meta-row"><span class="meta-label">White</span><span id="metaWhitePlayer" class="meta-value">{{ (game_meta.whitePlayer or '') if game_meta else '' }}</span></div>
           <div id="metaRowBlackPlayer" class="meta-row"><span class="meta-label">Black</span><span id="metaBlackPlayer" class="meta-value">{{ (game_meta.blackPlayer or '') if game_meta else '' }}</span></div>
           <div id="metaRowYear" class="meta-row"><span class="meta-label">Year</span><span id="metaYear" class="meta-value">{{ (game_meta.year or '') if game_meta else '' }}</span></div>
+          <div id="metaRowSuccesses" class="meta-row"><span class="meta-label">Successes</span><span id="metaSuccesses" class="meta-value">{{ (game_meta.successes or 0) if game_meta else 0 }}</span></div>
+          <div id="metaRowFails" class="meta-row"><span class="meta-label">Fails</span><span id="metaFails" class="meta-value">{{ (game_meta.fails or 0) if game_meta else 0 }}</span></div>
           <div id="metaRowPgn" class="meta-row"><span class="meta-label">PGN</span><span class="meta-value"><a id="metaPgnLink" href="#" download> </a></span></div>
           <div id="metaRowUrl" class="meta-row"><span class="meta-label">URL</span><span class="meta-value"><a id="metaGameLink" href="#" target="_blank" rel="noopener noreferrer"></a></span></div>
         </div>

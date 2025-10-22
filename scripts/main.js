@@ -332,6 +332,8 @@ document.addEventListener('DOMContentLoaded', function() {
     year: document.getElementById('metaRowYear'),
     url: document.getElementById('metaRowUrl'),
     pgn: document.getElementById('metaRowPgn'),
+    successes: document.getElementById('metaRowSuccesses'),
+    fails: document.getElementById('metaRowFails'),
   };
   const metaVals = {
     result: document.getElementById('metaResult'),
@@ -344,6 +346,8 @@ document.addEventListener('DOMContentLoaded', function() {
     year: document.getElementById('metaYear'),
     url: document.getElementById('metaGameLink'),
     pgn: document.getElementById('metaPgnLink'),
+    successes: document.getElementById('metaSuccesses'),
+    fails: document.getElementById('metaFails'),
   };
 
   // Initialize metadata rows visibility based on run metadata fields
@@ -352,13 +356,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const allowed = new Set(fields);
     Object.entries(metaRows).forEach(([key, row]) => {
       if (!row) return;
-      // In single-puzzle mode, show all allowed immediately (including URL/PGN)
+      // In single-puzzle mode, show all allowed immediately (including URL/PGN/successes/fails)
       if (IS_SINGLE) {
         row.style.display = allowed.has(key) ? '' : 'none';
         return;
       }
-      // In run mode, URL and PGN hidden until feedback
+      // In run mode, URL and PGN hidden until feedback; successes/fails are never shown in runs
       if (key === 'url' || key === 'pgn') {
+        row.style.display = 'none';
+        return;
+      }
+      if (key === 'successes' || key === 'fails') {
         row.style.display = 'none';
         return;
       }
@@ -1241,6 +1249,8 @@ function showResultMessage(resp) {
           whitePlayer: 'metaRowWhitePlayer',
           blackPlayer: 'metaRowBlackPlayer',
           year: 'metaRowYear',
+          successes: 'metaRowSuccesses',
+          fails: 'metaRowFails',
         };
         const rowEl = document.getElementById(rowIdByKey[key] || '');
         if (rowEl) rowEl.style.display = '';
@@ -1253,6 +1263,8 @@ function showResultMessage(resp) {
       setIf('whitePlayer', 'metaWhitePlayer', gm.whitePlayer);
       setIf('blackPlayer', 'metaBlackPlayer', gm.blackPlayer);
       setIf('year', 'metaYear', gm.year);
+      setIf('successes', 'metaSuccesses', gm.successes);
+      setIf('fails', 'metaFails', gm.fails);
     }
   } catch(_) {}
   

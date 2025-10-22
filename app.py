@@ -292,8 +292,14 @@ def create_app() -> Flask:
         if geo is None:
             return "Puzzle not found", 404
 
-        # Build unmasked metadata for single-puzzle view
+        # Build unmasked metadata for single-puzzle view, augmented with successes/fails
         game_meta = _build_game_meta(geo)
+        try:
+            if isinstance(game_meta, dict):
+                game_meta["successes"] = int(getattr(geo, "successes", 0) or 0)
+                game_meta["fails"] = int(getattr(geo, "fails", 0) or 0)
+        except Exception:
+            pass
         initial_subfen = geo.subfen
         geochess_id = geo.id
         try:
@@ -304,6 +310,9 @@ def create_app() -> Flask:
         # Use default metadata fields for single-puzzle mode (no URL)
         try:
             metadata_fields = SOURCE_METADATA_FIELDS.get("default", [])
+            # Ensure our new fields appear (they won't be shown in runs, only single-puzzle)
+            if "successes" not in metadata_fields:
+                metadata_fields = list(metadata_fields) + ["successes", "fails"]
         except Exception:
             metadata_fields = [
                 "result",
@@ -312,6 +321,8 @@ def create_app() -> Flask:
                 "move_num",
                 "opening_name",
                 "pgn",
+                "successes",
+                "fails",
             ]
         return render_template(
             "index.html",
@@ -808,6 +819,33 @@ def create_app() -> Flask:
         except Exception:
             pass
 
+        # Update per-puzzle successes/fails
+        try:
+            db_path3 = os.path.join(base_dir, "database", "geo_chess.db")
+            wrapper_sf = SQLiteWrapper(db_path3)
+            wrapper_sf.increment_geo_chess_attempt(rec_id, bool(correct))
+            try:
+                wrapper_sf.conn.close()
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+        # Build game meta for response and include up-to-date successes/fails estimate
+        try:
+            gm = _build_game_meta(geo) or {}
+            # Use in-memory increment to reflect this attempt immediately
+            cur_succ = int(getattr(geo, "successes", 0) or 0)
+            cur_fail = int(getattr(geo, "fails", 0) or 0)
+            if bool(correct):
+                gm["successes"] = cur_succ + 1
+                gm["fails"] = cur_fail
+            else:
+                gm["successes"] = cur_succ
+                gm["fails"] = cur_fail + 1
+        except Exception:
+            gm = _build_game_meta(geo)
+
         return jsonify(
             {
                 "ok": True,
@@ -820,7 +858,7 @@ def create_app() -> Flask:
                 "lastMoveCells": last_move_cells,
                 "pgn": (geo.chess_game.pgn if geo and geo.chess_game else None),
                 # In feedback, do not apply masking – send full metadata
-                "gameMeta": _build_game_meta(geo),
+                "gameMeta": gm,
                 # Full submissions array for run summary on the client
                 "allSubmissions": submissions,
                 # Elapsed time for the run if completed (seconds)

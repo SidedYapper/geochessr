@@ -1,4 +1,13 @@
 import sqlite3
+import os
+import json
+import hashlib
+from typing import Optional, Tuple
+
+try:
+    import redis  # optional; used for percentile cache
+except Exception:  # pragma: no cover
+    redis = None
 from geo_server.model import GeoChess, ChessGame, RunSettings, Run
 
 
@@ -7,6 +16,31 @@ class SQLiteWrapper:
         self.conn = sqlite3.connect(db_path)
         self.conn.execute("PRAGMA busy_timeout=5000;")
         self.initialize_tables()
+
+    # -------------------- Optional Redis Cache --------------------
+    _redis_instance = None
+
+    @classmethod
+    def _get_redis(cls):
+        if cls._redis_instance is not None:
+            return cls._redis_instance
+        if redis is None:
+            return None
+        try:
+            password = os.getenv("REDIS_PASSWORD")
+            r = redis.Redis(host="localhost", port=6379, db=0, password=password)
+            # simple ping to validate
+            r.ping()
+            cls._redis_instance = r
+            return r
+        except Exception:
+            return None
+
+    @staticmethod
+    def _percentile_cache_key(payload: dict) -> str:
+        raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        h = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        return f"geochessr:percentiles:{h}"
 
     def reset_database(self):
         self.conn.execute("DROP TABLE IF EXISTS geo_chess")
@@ -138,6 +172,26 @@ class SQLiteWrapper:
             timestamp_added=result[15],
         )
 
+    def increment_geo_chess_attempt(self, geo_id: int, correct: bool):
+        """
+        Increment successes if correct, otherwise increment fails, for a given puzzle id.
+        """
+        try:
+            if correct:
+                self.conn.execute(
+                    "UPDATE geo_chess SET successes = IFNULL(successes, 0) + 1 WHERE id = ?",
+                    (int(geo_id),),
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE geo_chess SET fails = IFNULL(fails, 0) + 1 WHERE id = ?",
+                    (int(geo_id),),
+                )
+            self.conn.commit()
+        except Exception:
+            # Swallow DB errors here to avoid impacting user flow
+            pass
+
     def select_geo_chess_for_run(self, run_settings: RunSettings) -> list[GeoChess]:
         # Build base filters (exclude percentile handling for now)
         where_clauses = []
@@ -191,24 +245,10 @@ class SQLiteWrapper:
         has_min_pct = run_settings.min_difficulty_percentage is not None
         has_max_pct = run_settings.max_difficulty_percentage is not None
 
-        percentile_bounds = None
+        percentile_bounds: Optional[Tuple[float, float]] = None
         if has_min_pct or has_max_pct:
             # First query: collect difficulties matching other constraints
             # Join to chess_games to allow source filtering later; but for difficulty sampling we don't need join
-            diff_query = (
-                f"SELECT difficulty FROM geo_chess{join_sql}{base_where_sql} AND difficulty IS NOT NULL"
-                if base_where_sql
-                else "SELECT difficulty FROM geo_chess WHERE difficulty IS NOT NULL"
-            )
-            cursor = self.conn.execute(diff_query, tuple(params))
-            diffs = [row[0] for row in cursor.fetchall() if row[0] is not None]
-            print(f"{len(diffs)} difficulties found yeah")
-            if not diffs:
-                return []
-
-            diffs.sort()
-            n = len(diffs)
-
             # Normalize percentage values: allow 0-1 or 0-100
             def normalize_pct(p):
                 if p is None:
@@ -232,16 +272,63 @@ class SQLiteWrapper:
                 # No possible results
                 return []
 
-            # Compute inclusive indices within sorted array
-            import math
+            # Attempt cache lookup before expensive diff scan
+            cache_payload = {
+                "min_score": run_settings.min_score,
+                "min_move_num": run_settings.min_move_num,
+                "max_move_num": run_settings.max_move_num,
+                "max_played": run_settings.max_played,
+                "early_timestamp": run_settings.early_timestamp,
+                "late_timestamp": run_settings.late_timestamp,
+                "min_difficulty": run_settings.min_difficulty,
+                "max_difficulty": run_settings.max_difficulty,
+                "source": getattr(run_settings, "source", None),
+                "min_pct": min_pct,
+                "max_pct": max_pct,
+            }
+            cache_key = self._percentile_cache_key(cache_payload)
+            r = self._get_redis()
+            if r is not None:
+                try:
+                    cached = r.get(cache_key)
+                    if cached:
+                        obj = json.loads(cached)
+                        lb = float(obj.get("low"))
+                        hb = float(obj.get("high"))
+                        percentile_bounds = (lb, hb)
+                except Exception:
+                    percentile_bounds = None
 
-            low_idx = int(math.floor(min_pct * (n - 1)))
-            high_idx = int(math.floor(max_pct * (n - 1)))
-            low_idx = max(0, min(n - 1, low_idx))
-            high_idx = max(0, min(n - 1, high_idx))
-            low_bound = diffs[low_idx]
-            high_bound = diffs[high_idx]
-            percentile_bounds = (low_bound, high_bound)
+            if percentile_bounds is None:
+                diff_query = (
+                    f"SELECT difficulty FROM geo_chess{join_sql}{base_where_sql} AND difficulty IS NOT NULL"
+                    if base_where_sql
+                    else "SELECT difficulty FROM geo_chess WHERE difficulty IS NOT NULL"
+                )
+                cursor = self.conn.execute(diff_query, tuple(params))
+                diffs = [row[0] for row in cursor.fetchall() if row[0] is not None]
+                if not diffs:
+                    return []
+                diffs.sort()
+                n = len(diffs)
+                import math
+
+                low_idx = int(math.floor(min_pct * (n - 1)))
+                high_idx = int(math.floor(max_pct * (n - 1)))
+                low_idx = max(0, min(n - 1, low_idx))
+                high_idx = max(0, min(n - 1, high_idx))
+                low_bound = diffs[low_idx]
+                high_bound = diffs[high_idx]
+                percentile_bounds = (low_bound, high_bound)
+                # Store in cache
+                if r is not None:
+                    try:
+                        r.set(
+                            cache_key,
+                            json.dumps({"low": low_bound, "high": high_bound}),
+                        )
+                    except Exception:
+                        pass
 
         # Final selection query
         final_where_clauses = list(where_clauses)
