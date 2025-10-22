@@ -77,36 +77,57 @@
       </div>
       <div class="modal-body">
         <div class="form-row">
-          <label class="form-label">Difficulty</label>
-          <input id="rsDifficulty" type="range" min="0" max="3" value="1" step="1" />
-          <div class="form-hint" id="rsDifficultyLabel">Normal (0%–30%)</div>
-        </div>
-
-        <div class="form-row">
-          <label class="form-label">Number of puzzles</label>
-          <input id="rsNPuzzles" type="range" min="1" max="50" value="10" />
-          <div class="form-hint">Selected: <span id="rsNPuzzlesVal">10</span></div>
-        </div>
-
-        <div class="form-row">
-          <label class="form-label">Move range</label>
-          <div class="dual-range">
-            <input id="rsMinMove" type="range" min="0" max="100" value="5" />
-            <input id="rsMaxMove" type="range" min="0" max="100" value="20" />
-          </div>
-          <div class="form-hint">From <span id="rsMinMoveVal">5</span> to <span id="rsMaxMoveVal">20</span></div>
-        </div>
-
-        <div class="form-row">
-          <label class="form-label">Game source</label>
+          <label class="form-label">Mode</label>
           <div class="form-hint">
-            <label><input type="radio" name="rsSource" id="rsSourceLichess" value="lichess" checked /> lichess</label>
-            <label style="margin-left: 16px;"><input type="radio" name="rsSource" id="rsSourceMasters" value="world_champion" /> masters</label>
+            <label><input type="radio" name="rsMode" id="rsModeExisting" value="existing" checked /> Play an existing run</label>
+            <label style="margin-left: 16px;"><input type="radio" name="rsMode" id="rsModeCreate" value="create" /> Create a new run</label>
+          </div>
+        </div>
+
+        <!-- Existing run section -->
+        <div id="rsExistingSection">
+          <div class="form-row">
+            <label class="form-label">Minimum times completed</label>
+            <input id="rsMinCompleted" type="range" min="0" max="50" value="10" />
+            <div class="form-hint">At least <span id="rsMinCompletedVal">10</span> times</div>
+          </div>
+          <div id="runModalError" class="error"></div>
+        </div>
+
+        <!-- Create new run section -->
+        <div id="rsCreateSection" style="display:none;">
+          <div class="form-row">
+            <label class="form-label">Difficulty</label>
+            <input id="rsDifficulty" type="range" min="0" max="3" value="1" step="1" />
+            <div class="form-hint" id="rsDifficultyLabel">Normal (0%–30%)</div>
+          </div>
+
+          <div class="form-row">
+            <label class="form-label">Number of puzzles</label>
+            <input id="rsNPuzzles" type="range" min="1" max="50" value="10" />
+            <div class="form-hint">Selected: <span id="rsNPuzzlesVal">10</span></div>
+          </div>
+
+          <div class="form-row">
+            <label class="form-label">Move range</label>
+            <div class="dual-range">
+              <input id="rsMinMove" type="range" min="0" max="100" value="5" />
+              <input id="rsMaxMove" type="range" min="0" max="100" value="20" />
+            </div>
+            <div class="form-hint">From <span id="rsMinMoveVal">5</span> to <span id="rsMaxMoveVal">20</span></div>
+          </div>
+
+          <div class="form-row">
+            <label class="form-label">Game source</label>
+            <div class="form-hint">
+              <label><input type="radio" name="rsSource" id="rsSourceLichess" value="lichess" checked /> lichess</label>
+              <label style="margin-left: 16px;"><input type="radio" name="rsSource" id="rsSourceMasters" value="world_champion" /> masters</label>
+            </div>
           </div>
         </div>
       </div>
       <div class="modal-footer">
-        <button id="runCreateBtn" class="primary-btn" type="button">Create run</button>
+        <button id="runCreateBtn" class="primary-btn" type="button">Play random run</button>
       </div>
     </div>
   </div>

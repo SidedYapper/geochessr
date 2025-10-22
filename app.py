@@ -961,6 +961,60 @@ def create_app() -> Flask:
             pass
         return jsonify({"ok": True, "run_id": run.identifier})
 
+    @app.route("/api/random_run", methods=["POST"])
+    def api_random_run():
+        try:
+            data = request.get_json(force=True, silent=False)
+        except Exception:
+            return jsonify({"ok": False, "error": "Invalid payload"}), 400
+        try:
+            min_completed = int(data.get("min_completed", 10))
+            min_completed = max(0, min(10_000, min_completed))
+        except Exception:
+            min_completed = 10
+
+        # Determine runs already visited in this session
+        try:
+            seen = set()
+            runs_state = session.get("runs") or {}
+            for rid in runs_state.keys():
+                seen.add(str(rid))
+            active = session.get("active_run_id")
+            if active:
+                seen.add(str(active))
+        except Exception:
+            seen = set()
+
+        db_path = os.path.join(base_dir, "database", "geo_chess.db")
+        wrapper = SQLiteWrapper(db_path)
+        try:
+            # Query eligible runs: completed_count >= min_completed and not daily
+            # Exclude seen run identifiers in this session
+            placeholders = ",".join(["?"] * (len(seen) if seen else 1))
+            exclude_clause = f" AND identifier NOT IN ({placeholders})" if seen else ""
+            params = [min_completed]
+            if seen:
+                params.extend(list(seen))
+            cursor = wrapper.conn.execute(
+                f"SELECT identifier FROM runs WHERE IFNULL(completed_count,0) >= ? AND IFNULL(is_daily,0) = 0{exclude_clause}"
+                " ORDER BY RANDOM() LIMIT 1",
+                tuple(params) if params else (),
+            )
+            row = cursor.fetchone()
+            if not row:
+                try:
+                    wrapper.conn.close()
+                except Exception:
+                    pass
+                return jsonify({"ok": False, "error": "No eligible runs"}), 404
+            run_id = row[0]
+        finally:
+            try:
+                wrapper.conn.close()
+            except Exception:
+                pass
+        return jsonify({"ok": True, "run_id": run_id})
+
     # Ensure the daily thread is started when the app is created
     _start_daily_thread_if_needed()
     return app

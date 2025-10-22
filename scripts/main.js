@@ -385,6 +385,14 @@ document.addEventListener('DOMContentLoaded', function() {
   const runCreateBtn = document.getElementById('runCreateBtn');
   const rsSourceLichess = document.getElementById('rsSourceLichess');
   const rsSourceMasters = document.getElementById('rsSourceMasters');
+  // Mode + existing-run controls
+  const rsModeExisting = document.getElementById('rsModeExisting');
+  const rsModeCreate = document.getElementById('rsModeCreate');
+  const rsExistingSection = document.getElementById('rsExistingSection');
+  const rsCreateSection = document.getElementById('rsCreateSection');
+  const rsMinCompleted = document.getElementById('rsMinCompleted');
+  const rsMinCompletedVal = document.getElementById('rsMinCompletedVal');
+  const runModalError = document.getElementById('runModalError');
 
   // Determine if this run supports lichess URLs
   const lichessAllowed = Array.isArray(window.METADATA_FIELDS) && window.METADATA_FIELDS.includes('url');
@@ -406,17 +414,34 @@ document.addEventListener('DOMContentLoaded', function() {
       if (rsSourceMasters && rsSourceMasters.checked) source = 'world_champion';
       else if (rsSourceLichess && rsSourceLichess.checked) source = 'lichess';
     } catch (_) {}
+    const mode = (rsModeExisting && rsModeExisting.checked) ? 'existing' : 'create';
+    const min_completed = Number(rsMinCompleted && rsMinCompleted.value || 10);
     return {
       difficulty: Number(rsDifficulty && rsDifficulty.value || 1),
-      n_puzzles: Number(rsNPuzzles && rsNPuzzles.value || 10),
+      n_puzzles: Number(rsNPuzzles && rsNPuzzles.value || 5),
       min_move: Number(rsMinMove && rsMinMove.value || 5),
       max_move: Number(rsMaxMove && rsMaxMove.value || 20),
       source,
+      mode,
+      min_completed,
     };
   }
   function applyRunSettingsToUI(s) {
     if (!s || typeof s !== 'object') return;
     try {
+      // Mode and existing-run slider
+      if (s.mode === 'existing') {
+        if (rsModeExisting) rsModeExisting.checked = true;
+        if (rsModeCreate) rsModeCreate.checked = false;
+      } else if (s.mode === 'create') {
+        if (rsModeExisting) rsModeExisting.checked = false;
+        if (rsModeCreate) rsModeCreate.checked = true;
+      }
+      if (typeof s.min_completed === 'number' && rsMinCompleted) {
+        rsMinCompleted.value = String(Math.max(0, Math.min(50, s.min_completed)));
+      }
+      if (rsMinCompletedVal && rsMinCompleted) rsMinCompletedVal.textContent = String(rsMinCompleted.value || 10);
+
       if (typeof s.difficulty === 'number' && rsDifficulty) rsDifficulty.value = String(Math.max(0, Math.min(3, s.difficulty)));
       if (typeof s.n_puzzles === 'number' && rsNPuzzles) rsNPuzzles.value = String(Math.max(1, Math.min(50, s.n_puzzles)));
       if (typeof s.min_move === 'number' && rsMinMove) rsMinMove.value = String(Math.max(0, Math.min(100, s.min_move)));
@@ -429,6 +454,7 @@ document.addEventListener('DOMContentLoaded', function() {
       if (typeof updateDiffLabel === 'function') updateDiffLabel();
       if (typeof clampMinMax === 'function') clampMinMax.call(rsMaxMove);
       if (rsNPuzzles && rsNPuzzlesVal) rsNPuzzlesVal.textContent = String(rsNPuzzles.value);
+      updateModeSections();
     } catch (_) {}
   }
   function saveRunSettingsCookie() {
@@ -441,14 +467,29 @@ document.addEventListener('DOMContentLoaded', function() {
   function loadRunSettingsCookie() {
     try {
       const raw = getCookie('runSettings');
-      if (!raw) return;
-      const s = JSON.parse(decodeURIComponent(raw));
-      applyRunSettingsToUI(s);
+      if (raw) {
+        const s = JSON.parse(decodeURIComponent(raw));
+        applyRunSettingsToUI(s);
+      } else {
+        // Defaults for first-time users
+        applyRunSettingsToUI({ mode: 'existing', min_completed: 10, difficulty: 1, n_puzzles: 5, min_move: 5, max_move: 20, source: 'lichess' });
+      }
     } catch (_) {}
   }
 
+  function updateModeSections() {
+    const useExisting = !!(rsModeExisting && rsModeExisting.checked);
+    if (rsExistingSection) rsExistingSection.style.display = useExisting ? '' : 'none';
+    if (rsCreateSection) rsCreateSection.style.display = useExisting ? 'none' : '';
+    if (runModalError) runModalError.textContent = '';
+    if (runCreateBtn) runCreateBtn.textContent = useExisting ? 'Play random run' : 'Create run';
+  }
+  if (rsModeExisting) rsModeExisting.addEventListener('change', () => { updateModeSections(); saveRunSettingsCookie(); });
+  if (rsModeCreate) rsModeCreate.addEventListener('change', () => { updateModeSections(); saveRunSettingsCookie(); });
+  if (rsMinCompleted && rsMinCompletedVal) rsMinCompleted.addEventListener('input', () => { rsMinCompletedVal.textContent = String(rsMinCompleted.value); saveRunSettingsCookie(); });
+
   if (btnNewRun && modal) {
-    btnNewRun.addEventListener('click', () => { loadRunSettingsCookie(); modal.style.display = 'grid'; });
+    btnNewRun.addEventListener('click', () => { loadRunSettingsCookie(); updateModeSections(); modal.style.display = 'grid'; });
   }
   if (modalClose && modal) {
     modalClose.addEventListener('click', () => { modal.style.display = 'none'; });
@@ -637,32 +678,53 @@ document.addEventListener('DOMContentLoaded', function() {
 
   if (runCreateBtn) {
     runCreateBtn.addEventListener('click', async () => {
-      const diff = Number(rsDifficulty.value || 1);
-      let source = 'lichess';
-      try {
-        if (rsSourceMasters && rsSourceMasters.checked) source = 'world_champion';
-        else if (rsSourceLichess && rsSourceLichess.checked) source = 'lichess';
-      } catch (_) { /* default to lichess */ }
-      const payload = {
-        difficulty: diff,
-        n_puzzles: Number(rsNPuzzles.value || 8),
-        min_move: Number(rsMinMove.value || 5),
-        max_move: Number(rsMaxMove.value || 20),
-        source,
-      };
-      // Persist settings on create
+      const useExisting = !!(rsModeExisting && rsModeExisting.checked);
       saveRunSettingsCookie();
-      try {
-        const res = await fetch('/api/create_run', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const data = await res.json();
-        if (data && data.ok && data.run_id) {
+      if (useExisting) {
+        try {
+          const minCompleted = Number(rsMinCompleted && rsMinCompleted.value || 10);
+          const res = await fetch('/api/random_run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ min_completed: minCompleted }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data || !data.ok || !data.run_id) throw new Error(data && data.error || 'No eligible runs found');
           window.location.assign(`/run/${encodeURIComponent(data.run_id)}`);
+        } catch (e) {
+          if (runModalError) runModalError.textContent = 'No eligible runs found. Try lowering the minimum or create a new run.';
         }
-      } catch (_) { /* silent */ }
+      } else {
+        const diff = Number(rsDifficulty && rsDifficulty.value || 1);
+        let source = 'lichess';
+        try {
+          if (rsSourceMasters && rsSourceMasters.checked) source = 'world_champion';
+          else if (rsSourceLichess && rsSourceLichess.checked) source = 'lichess';
+        } catch (_) {}
+        const payload = {
+          difficulty: diff,
+          n_puzzles: Number(rsNPuzzles && rsNPuzzles.value || 8),
+          min_move: Number(rsMinMove && rsMinMove.value || 5),
+          max_move: Number(rsMaxMove && rsMaxMove.value || 20),
+          source,
+        };
+        try {
+          const res = await fetch('/api/create_run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (data && data.ok && data.run_id) {
+            window.location.assign(`/run/${encodeURIComponent(data.run_id)}`);
+          } else {
+            throw new Error('Create failed');
+          }
+        } catch (_) {
+          const errEl = document.getElementById('error');
+          if (errEl) errEl.textContent = 'Failed to create run. Please try again.';
+        }
+      }
     });
   }
 });
@@ -1021,14 +1083,22 @@ async function submitBoard8Selection() {
       }
     }
 
-    // Play sound: if last puzzle, play correct/incorrect first, then run_finished
+    // Play sound: in single-puzzle mode only play correct/incorrect.
+    // In run mode, if last puzzle, chain correct/incorrect then run_finished or all_correct.
     try {
-      const isLastPuzzle = (IS_SINGLE || (currentRunIndex === currentRunLen - 1));
-      if (isLastPuzzle) {
-        const correctCount = countCorrectSubmissions();
-        playSfxThen(data && data.correct ? 'correct' : 'incorrect', correctCount === currentRunLen ? 'all_correct' : 'run_finished');
-      } else {
+      if (IS_SINGLE) {
         playSfx(data && data.correct ? 'correct' : 'incorrect');
+      } else {
+        const isLastPuzzle = (currentRunIndex === currentRunLen - 1);
+        if (isLastPuzzle) {
+          const correctCount = countCorrectSubmissions();
+          playSfxThen(
+            data && data.correct ? 'correct' : 'incorrect',
+            correctCount === currentRunLen ? 'all_correct' : 'run_finished'
+          );
+        } else {
+          playSfx(data && data.correct ? 'correct' : 'incorrect');
+        }
       }
     } catch (_) {}
     

@@ -140,6 +140,9 @@ def compute_subfen_stats(geo_chess: GeoChess):
     stats["piece_count"] = stats["white_piece_count"] + stats["black_piece_count"]
     stats["piece_pawn_count"] = stats["white_count"] + stats["black_count"]
     stats["king_count"] = subfen.count("K") + subfen.count("k")
+    stats["has_center_squares"] = (
+        geo_chess.posx <= 4 and geo_chess.posx + geo_chess.dimx >= 4
+    ) and (geo_chess.posy <= 4 and geo_chess.posy + geo_chess.dimy >= 4)
 
     corrected_posy = 8 - geo_chess.posy
     corrected_posx = geo_chess.posx + 1
@@ -188,7 +191,8 @@ def score_subfen(geo_chess: GeoChess):
         + (stats["pawn_count"] > 0)
         + (stats["white_count"] > 0)
         + (stats["black_count"] > 0)
-        + (stats["piece_count"] > 0)
+        + (stats["piece_count"] > 0) * 0.5
+        + (not stats["has_center_squares"]) * 0.5
         - (stats["king_count"] > 0)
         - (stats["unmoved_piece_pawn_count"] > 2)
     )

@@ -202,7 +202,7 @@ class SQLiteWrapper:
             )
             cursor = self.conn.execute(diff_query, tuple(params))
             diffs = [row[0] for row in cursor.fetchall() if row[0] is not None]
-            print(f"{len(diffs)} difficulties found")
+            print(f"{len(diffs)} difficulties found yeah")
             if not diffs:
                 return []
 
@@ -425,6 +425,7 @@ class SQLiteWrapper:
         prev_avg_time = float(row[1]) if row[1] is not None else None
         prev_avg_correct = float(row[2]) if row[2] is not None else None
         new_completed = completed + 1
+        time_taken_seconds = min(time_taken_seconds, 600)  # 10 minutes
         # Compute new averages
         if prev_avg_time is None:
             new_avg_time = float(time_taken_seconds)
