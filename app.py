@@ -23,6 +23,7 @@ from geo_server.manage_runs import create_run_and_add_to_database, RunSettings
 from geo_server.constants import metadata_fields as SOURCE_METADATA_FIELDS
 import dotenv
 import secrets
+import secrets as _secrets
 
 
 def create_app() -> Flask:
@@ -800,6 +801,23 @@ def create_app() -> Flask:
                                             correct_count,
                                             len(submissions),
                                         )
+                                        # Create certificate for sharing
+                                        try:
+                                            successes = [
+                                                bool(s and s.get("correct"))
+                                                for s in submissions
+                                            ]
+                                            cert_id = _secrets.token_urlsafe(10)
+                                            wrapper_stats.insert_certificate(
+                                                cert_id,
+                                                active_run_id,
+                                                run.puzzle_ids,
+                                                successes,
+                                                time_taken_seconds,
+                                            )
+                                            st["certificate_id"] = cert_id
+                                        except Exception:
+                                            pass
                                         try:
                                             wrapper_stats.conn.close()
                                         except Exception:
@@ -1052,6 +1070,52 @@ def create_app() -> Flask:
             except Exception:
                 pass
         return jsonify({"ok": True, "run_id": run_id})
+
+    @app.route("/api/session_certificate/<run_id>", methods=["GET"])
+    def api_session_certificate(run_id: str):
+        try:
+            runs_state = session.get("runs") or {}
+            st = runs_state.get(run_id) or {}
+            cert_id = st.get("certificate_id")
+            if not cert_id:
+                return jsonify({"ok": False, "error": "No certificate"}), 404
+            return jsonify({"ok": True, "certificate_id": cert_id})
+        except Exception:
+            return jsonify({"ok": False, "error": "Failed"}), 500
+
+    @app.route("/certificate/<cert_id>", methods=["GET"])
+    def certificate_page(cert_id: str):
+        db_path = os.path.join(base_dir, "database", "geo_chess.db")
+        wrapper = SQLiteWrapper(db_path)
+        cert = wrapper.get_certificate(cert_id)
+        try:
+            wrapper.conn.close()
+        except Exception:
+            pass
+        if cert is None:
+            return "Certificate not found", 404
+        # Also fetch run stats for header if available
+        db_path2 = os.path.join(base_dir, "database", "geo_chess.db")
+        wrapper2 = SQLiteWrapper(db_path2)
+        run = wrapper2.get_run(cert["run_id"]) if cert.get("run_id") else None
+        try:
+            wrapper2.conn.close()
+        except Exception:
+            pass
+        return render_template(
+            "certificate.html",
+            run_id=cert["run_id"],
+            puzzle_ids=cert["puzzle_ids"],
+            successes=cert["successes"],
+            time_taken_seconds=cert.get("time_taken_seconds"),
+            run_completed_count=(getattr(run, "completed_count", 0) if run else 0),
+            run_avg_time_seconds=(
+                getattr(run, "avg_time_seconds", None) if run else None
+            ),
+            run_avg_correct_count=(
+                getattr(run, "avg_correct_count", None) if run else None
+            ),
+        )
 
     # Ensure the daily thread is started when the app is created
     _start_daily_thread_if_needed()

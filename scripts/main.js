@@ -1467,26 +1467,34 @@ function showRunSummary() {
   // Show the summary
   runSummary.style.display = 'flex';
   
-  // Setup "Copy run link" button
+  // Setup "Copy Certificate" button pointing to generated certificate
   const copyLinkBtn = document.getElementById('copyRunLinkBtn');
   if (copyLinkBtn && !copyLinkBtn.dataset.bound) {
+    copyLinkBtn.textContent = 'Copy Certificate';
     copyLinkBtn.addEventListener('click', async () => {
       try {
-        const loc = window.location;
-        const url = `${loc.origin}${loc.pathname}`; // strip query/hash
-        await navigator.clipboard.writeText(url);
-        // Visual feedback
+        // Retrieve certificate id from a lightweight endpoint
+        const runId = (window.RUN_ID || '').trim();
+        let certId = null;
+        if (runId) {
+          const res = await fetch(`/api/session_certificate/${encodeURIComponent(runId)}`);
+          const data = await res.json().catch(() => ({}));
+          if (data && data.ok && data.certificate_id) certId = data.certificate_id;
+        }
+        if (!certId) throw new Error('No certificate');
+        const shareUrl = `${window.location.origin}/certificate/${encodeURIComponent(certId)}`;
+        await navigator.clipboard.writeText(shareUrl);
         copyLinkBtn.textContent = 'Copied!';
         copyLinkBtn.classList.add('copied');
         setTimeout(() => {
-          copyLinkBtn.textContent = 'Copy run link';
+          copyLinkBtn.textContent = 'Copy Certificate';
           copyLinkBtn.classList.remove('copied');
         }, 2000);
       } catch (err) {
         console.error('Failed to copy:', err);
         copyLinkBtn.textContent = 'Failed';
         setTimeout(() => {
-          copyLinkBtn.textContent = 'Copy run link';
+          copyLinkBtn.textContent = 'Copy Certificate';
         }, 2000);
       }
     });

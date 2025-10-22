@@ -70,6 +70,12 @@ class SQLiteWrapper:
         self.conn.execute(
             "CREATE TABLE IF NOT EXISTS run_puzzles (run_id TEXT, puzzle_id INTEGER, PRIMARY KEY (run_id, puzzle_id))"
         )
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS certificates (certificate_id TEXT PRIMARY KEY, run_id TEXT, created_at REAL, time_taken_seconds INTEGER)"
+        )
+        self.conn.execute(
+            "CREATE TABLE IF NOT EXISTS certificate_puzzles (certificate_id TEXT, idx INTEGER, puzzle_id INTEGER, success INTEGER, PRIMARY KEY (certificate_id, idx))"
+        )
         self.conn.commit()
 
     def insert_geo_chess(self, geo_chess: GeoChess):
@@ -531,3 +537,58 @@ class SQLiteWrapper:
             (new_completed, new_avg_time, new_avg_correct, run_id),
         )
         self.conn.commit()
+
+    # -------------------- Certificates --------------------
+    def insert_certificate(
+        self,
+        certificate_id: str,
+        run_id: str,
+        puzzle_ids: list[int],
+        successes: list[bool],
+        time_taken_seconds: int | None,
+    ):
+        import time
+
+        self.conn.execute(
+            "INSERT INTO certificates (certificate_id, run_id, created_at, time_taken_seconds) VALUES (?, ?, ?, ?)",
+            (
+                certificate_id,
+                run_id,
+                float(time.time()),
+                (int(time_taken_seconds) if time_taken_seconds is not None else None),
+            ),
+        )
+        for idx, pid in enumerate(puzzle_ids):
+            succ = 1 if (idx < len(successes) and bool(successes[idx])) else 0
+            self.conn.execute(
+                "INSERT INTO certificate_puzzles (certificate_id, idx, puzzle_id, success) VALUES (?, ?, ?, ?)",
+                (certificate_id, int(idx), int(pid), succ),
+            )
+        self.conn.commit()
+
+    def get_certificate(self, certificate_id: str):
+        cur = self.conn.execute(
+            "SELECT run_id, created_at, time_taken_seconds FROM certificates WHERE certificate_id = ?",
+            (certificate_id,),
+        )
+        head = cur.fetchone()
+        if head is None:
+            return None
+        run_id, created_at, time_taken_seconds = head[0], head[1], head[2]
+        cur2 = self.conn.execute(
+            "SELECT idx, puzzle_id, success FROM certificate_puzzles WHERE certificate_id = ? ORDER BY idx ASC",
+            (certificate_id,),
+        )
+        rows = cur2.fetchall()
+        puzzle_ids = [r[1] for r in rows]
+        successes = [bool(r[2]) for r in rows]
+        return {
+            "certificate_id": certificate_id,
+            "run_id": run_id,
+            "created_at": created_at,
+            "time_taken_seconds": (
+                int(time_taken_seconds) if time_taken_seconds is not None else None
+            ),
+            "puzzle_ids": puzzle_ids,
+            "successes": successes,
+        }

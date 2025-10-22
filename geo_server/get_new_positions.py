@@ -322,7 +322,6 @@ def store_the_world_champion_games(sqlite_wrapper: SQLiteWrapper):
 
 if __name__ == "__main__":
     sqlite_wrapper = SQLiteWrapper("database/geo_chess.db")
-    sqlite_wrapper.reset_database()
     store_the_world_champion_games(sqlite_wrapper)
     for f in tqdm(os.listdir("data/tournaments"), desc="Parsing lichess tournaments"):
         create_and_store_geochess_from_pgn(

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GeoChessr - Certificate</title>
+  <link rel="stylesheet" href="{{ url_for('styles', filename='main.css') }}">
+</head>
+<body>
+  <main class="container">
+    <h1 class="page-title">GeoChessr.io</h1>
+    <div class="meta" style="width: min(320px, 50vw); margin: 0 auto;">
+      <div id="feedbackCard" class="feedback-card" style="display: grid;">
+        <div id="feedbackTitle" class="status-title">Run Certificate</div>
+        <div id="runSummary" class="run-summary" style="display: flex;">
+          <div id="runSummaryBoxes" class="run-summary-boxes"></div>
+          <div id="runSummaryTime" class="run-summary-time"></div>
+          <div style="display:flex; gap:8px; justify-content:center;">
+            <a class="copy-link-btn" href="{{ url_for('run_page', run_id=run_id) }}">Play this run</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    window.CERT_RUN_ID = {{ (run_id or '')|tojson }};
+    window.CERT_PUZZLE_IDS = {{ (puzzle_ids or [])|tojson }};
+    window.CERT_SUCCESSES = {{ (successes or [])|tojson }};
+    window.CERT_TIME_TAKEN_SECONDS = {{ (time_taken_seconds if time_taken_seconds is not none else None)|tojson }};
+    window.RUN_STATS = {{ ({
+      'completedCount': (run_completed_count if run_completed_count is not none else 0),
+      'avgTimeSeconds': (run_avg_time_seconds if run_avg_time_seconds is not none else None),
+      'avgCorrectCount': (run_avg_correct_count if run_avg_correct_count is not none else None),
+    })|tojson }};
+  </script>
+  <script src="{{ url_for('scripts', filename='certificate.js') }}"></script>
+</body>
+</html>
+
+
